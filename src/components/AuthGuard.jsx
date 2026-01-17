@@ -17,7 +17,7 @@ export default function AuthGuard({ children }) {
 
   // Si no hay usuario autenticado, el componente padre (App.jsx) mostrará el login
   if (!user) {
-    return null;
+    return children;
   }
 
   // Si hay usuario pero no está desbloqueado, mostrar pantalla de PIN
