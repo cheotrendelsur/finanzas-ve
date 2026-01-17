@@ -16,4 +16,5 @@ export default defineConfig({
       }
     })
   ],
+  base: '/',  // <--- ¡ESTA ES LA LÍNEA MÁGICA QUE TE FALTA!
 });
