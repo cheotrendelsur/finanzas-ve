@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
-import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { getMovimientos } from '../supabaseClient';
 
 export default function Analytics() {
   const [tipoFiltro, setTipoFiltro] = useState('egreso');
-  const [modoFiltro, setModoFiltro] = useState('mes'); // año, mes, periodo
+  const [modoFiltro, setModoFiltro] = useState('mes');
   const [añoSeleccionado, setAñoSeleccionado] = useState(new Date().getFullYear());
   const [mesSeleccionado, setMesSeleccionado] = useState(new Date().getMonth() + 1);
   const [fechaInicio, setFechaInicio] = useState('');
@@ -53,7 +53,6 @@ export default function Analytics() {
   const procesarDatos = () => {
     const filtrados = filtrarMovimientos();
 
-    // Agrupar por categoría
     const porCategoria = {};
     filtrados.forEach(mov => {
       const categoriaNombre = mov.categoria?.nombre || 'Sin categoría';
@@ -73,7 +72,6 @@ export default function Analytics() {
     const dataCategoria = Object.values(porCategoria);
     const total = dataCategoria.reduce((sum, cat) => sum + cat.value, 0);
 
-    // Calcular porcentajes
     dataCategoria.forEach(cat => {
       cat.percentage = total > 0 ? ((cat.value / total) * 100).toFixed(1) : 0;
     });
@@ -81,7 +79,6 @@ export default function Analytics() {
     setDataPorCategoria(dataCategoria);
     setTotalPeriodo(total);
 
-    // Calcular resumen global
     calcularResumen();
   };
 
@@ -134,7 +131,7 @@ export default function Analytics() {
     { value: 12, label: 'Diciembre' }
   ];
 
-  const años = Array.from({ length: 78 }, (_, i) => 2023 + i); // 2023-2100
+  const años = Array.from({ length: 78 }, (_, i) => 2023 + i);
 
   const getPeriodoLabel = () => {
     if (modoFiltro === 'año') return `Año ${añoSeleccionado}`;
@@ -151,7 +148,6 @@ export default function Analytics() {
 
       {/* Filtros Superiores */}
       <div className="space-y-4 mb-6">
-        {/* Toggle Ingresos/Egresos */}
         <div className="bg-gray-100 rounded-xl p-1 grid grid-cols-2 gap-1">
           <button
             onClick={() => setTipoFiltro('ingreso')}
@@ -175,7 +171,6 @@ export default function Analytics() {
           </button>
         </div>
 
-        {/* Selector de Modo */}
         <select
           value={modoFiltro}
           onChange={(e) => setModoFiltro(e.target.value)}
@@ -186,7 +181,6 @@ export default function Analytics() {
           <option value="periodo">Por Periodo</option>
         </select>
 
-        {/* Filtros Dinámicos según Modo */}
         {modoFiltro === 'año' && (
           <select
             value={añoSeleccionado}
@@ -256,11 +250,12 @@ export default function Analytics() {
         <p className="text-xs opacity-75 mt-1">USD</p>
       </div>
 
-      {/* Gráfico de Pastel - SIN LABELS, SOLO LEYENDA */}
+      {/* Gráfico de Pastel - SIN LEYENDA NATIVA */}
       {dataPorCategoria.length > 0 ? (
         <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 mb-6">
           <h3 className="text-lg font-semibold text-gray-800 mb-4">Distribución por Categoría</h3>
           
+          {/* GRÁFICO LIMPIO - Sin labels, sin leyenda nativa */}
           <ResponsiveContainer width="100%" height={300}>
             <PieChart>
               <Pie
@@ -278,28 +273,35 @@ export default function Analytics() {
                 ))}
               </Pie>
               <Tooltip formatter={(value) => `$${value.toFixed(2)}`} />
-              <Legend 
-                verticalAlign="bottom" 
-                height={36}
-                formatter={(value, entry) => `${value} (${entry.payload.percentage}%)`}
-              />
             </PieChart>
           </ResponsiveContainer>
 
-          {/* Leyenda Detallada */}
-          <div className="mt-4 space-y-2">
+          {/* LISTA PERSONALIZADA DEBAJO DEL GRÁFICO */}
+          <div className="mt-6 space-y-3">
             {dataPorCategoria.map((cat, index) => (
-              <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                <div className="flex items-center gap-3">
+              <div 
+                key={index} 
+                className="flex items-center justify-between p-4 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors"
+              >
+                <div className="flex items-center gap-3 flex-1">
+                  {/* Punto de color */}
                   <div
-                    className="w-4 h-4 rounded-full"
+                    className="w-5 h-5 rounded-full flex-shrink-0"
                     style={{ backgroundColor: cat.color }}
                   />
-                  <span className="font-medium text-gray-700">{cat.name}</span>
+                  {/* Nombre de categoría */}
+                  <span className="font-semibold text-gray-800">{cat.name}</span>
                 </div>
+                
                 <div className="text-right">
-                  <p className="font-bold text-gray-900">${cat.value.toFixed(2)}</p>
-                  <p className="text-xs text-gray-500">{cat.percentage}%</p>
+                  {/* Monto en USD */}
+                  <p className="text-lg font-bold text-gray-900">
+                    ${cat.value.toFixed(2)}
+                  </p>
+                  {/* Porcentaje */}
+                  <p className="text-sm font-medium text-gray-500">
+                    {cat.percentage}%
+                  </p>
                 </div>
               </div>
             ))}
@@ -329,7 +331,6 @@ export default function Analytics() {
             </BarChart>
           </ResponsiveContainer>
 
-          {/* Resumen en Texto */}
           <div className="mt-4 grid grid-cols-3 gap-3">
             {dataResumen.map((item, index) => (
               <div key={index} className="text-center p-3 bg-gray-50 rounded-lg">

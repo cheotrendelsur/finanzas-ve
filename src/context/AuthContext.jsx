@@ -16,7 +16,9 @@ export const AuthProvider = ({ children }) => {
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user || null);
       if (!session?.user) {
+        // Si no hay usuario, limpiar todo
         setIsUnlocked(false);
+        sessionStorage.removeItem('isUnlocked');
       }
     });
 
@@ -26,23 +28,38 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const checkUser = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    setUser(session?.user || null);
-    
-    if (session?.user) {
-      await loadPINSettings(session.user.id);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      setUser(session?.user || null);
+      
+      if (session?.user) {
+        await loadPINSettings(session.user.id);
+        
+        // PERSISTENCIA: Si ya estaba desbloqueado en esta sesión (refresh), mantenerlo
+        const wasUnlocked = sessionStorage.getItem('isUnlocked') === 'true';
+        if (wasUnlocked) {
+          setIsUnlocked(true);
+        }
+      }
+    } catch (error) {
+      console.error('Error checking user:', error);
+      setUser(null);
+    } finally {
+      // SIEMPRE pasar loading a false
+      setLoading(false);
     }
-    
-    setLoading(false);
   };
 
   const loadPINSettings = async (userId) => {
-    // Cargar configuración de PIN desde localStorage
-    const storedPIN = localStorage.getItem(`pin_${userId}`);
-    const biometricSetting = localStorage.getItem(`biometric_${userId}`);
-    
-    setHasPIN(!!storedPIN);
-    setBiometricEnabled(biometricSetting === 'true');
+    try {
+      const storedPIN = localStorage.getItem(`pin_${userId}`);
+      const biometricSetting = localStorage.getItem(`biometric_${userId}`);
+      
+      setHasPIN(!!storedPIN);
+      setBiometricEnabled(biometricSetting === 'true');
+    } catch (error) {
+      console.error('Error loading PIN settings:', error);
+    }
   };
 
   // Crear PIN
@@ -50,11 +67,13 @@ export const AuthProvider = ({ children }) => {
     if (!user) return false;
     
     try {
-      // Hashear el PIN antes de guardarlo (simple hash para demo)
       const hashedPIN = btoa(pin);
       localStorage.setItem(`pin_${user.id}`, hashedPIN);
       setHasPIN(true);
       setIsUnlocked(true);
+      
+      // Persistir estado desbloqueado en sessionStorage
+      sessionStorage.setItem('isUnlocked', 'true');
       return true;
     } catch (error) {
       console.error('Error creating PIN:', error);
@@ -72,6 +91,8 @@ export const AuthProvider = ({ children }) => {
       
       if (hashedPIN === storedPIN) {
         setIsUnlocked(true);
+        // Persistir estado desbloqueado en sessionStorage
+        sessionStorage.setItem('isUnlocked', 'true');
         return true;
       }
       return false;
@@ -86,13 +107,11 @@ export const AuthProvider = ({ children }) => {
     if (!user) return false;
     
     try {
-      // Verificar si WebAuthn está disponible
       if (!window.PublicKeyCredential) {
         alert('Tu navegador no soporta autenticación biométrica');
         return false;
       }
 
-      // Crear credencial WebAuthn
       const publicKeyCredentialCreationOptions = {
         challenge: Uint8Array.from(user.id, c => c.charCodeAt(0)),
         rp: {
@@ -161,6 +180,8 @@ export const AuthProvider = ({ children }) => {
 
       if (assertion) {
         setIsUnlocked(true);
+        // Persistir estado desbloqueado en sessionStorage
+        sessionStorage.setItem('isUnlocked', 'true');
         return true;
       }
       
@@ -174,14 +195,12 @@ export const AuthProvider = ({ children }) => {
   // Verificar PIN para acciones críticas
   const requirePINForAction = async () => {
     return new Promise((resolve) => {
-      // Primero intentar biometría si está disponible
       if (biometricEnabled) {
         authenticateWithBiometric()
           .then(success => {
             if (success) {
               resolve(true);
             } else {
-              // Si falla biometría, pedir PIN
               const pin = prompt('Ingresa tu PIN para continuar:');
               if (pin) {
                 validatePIN(pin).then(resolve);
@@ -191,7 +210,6 @@ export const AuthProvider = ({ children }) => {
             }
           });
       } else {
-        // Solo PIN
         const pin = prompt('Ingresa tu PIN para continuar:');
         if (pin) {
           validatePIN(pin).then(resolve);
@@ -202,11 +220,31 @@ export const AuthProvider = ({ children }) => {
     });
   };
 
-  const logout = () => {
-    setIsUnlocked(false);
-    setUser(null);
-    setHasPIN(false);
-    setBiometricEnabled(false);
+  // LOGOUT MEJORADO - Limpieza total
+  const logout = async () => {
+    try {
+      // 1. Cerrar sesión en Supabase
+      await supabase.auth.signOut();
+      
+      // 2. Limpiar estado local
+      setIsUnlocked(false);
+      setUser(null);
+      setHasPIN(false);
+      setBiometricEnabled(false);
+      
+      // 3. Limpiar sessionStorage (estado de desbloqueado)
+      sessionStorage.removeItem('isUnlocked');
+      
+      // 4. NO limpiar localStorage del PIN (para que persista entre sesiones)
+      // El PIN y la biometría deben persistir incluso después del logout
+      
+      // 5. Recargar la página para limpiar cualquier estado residual
+      window.location.reload();
+    } catch (error) {
+      console.error('Error during logout:', error);
+      // Forzar recarga incluso si hay error
+      window.location.reload();
+    }
   };
 
   return (
