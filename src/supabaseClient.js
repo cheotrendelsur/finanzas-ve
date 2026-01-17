@@ -5,44 +5,8 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-// Helper para obtener tasa de cambio
-export const getTasaCambio = async (fecha) => {
-  try {
-    const { data, error } = await supabase
-      .from('tasas_cambio')
-      .select('valor')
-      .eq('fecha', fecha)
-      .single();
+// ==================== CUENTAS ====================
 
-    if (error) {
-      console.error('Error obteniendo tasa:', error);
-      return null;
-    }
-    return data?.valor || null;
-  } catch (err) {
-    console.error('Error en getTasaCambio:', err);
-    return null;
-  }
-};
-
-// Helper para calcular monto en USD
-export const calcularMontoUSD = async (monto, moneda, fecha) => {
-  if (moneda === 'USD') {
-    return { montoUSD: parseFloat(monto), tasa: null };
-  }
-  
-  const tasa = await getTasaCambio(fecha);
-  if (!tasa) {
-    return { montoUSD: 0, tasa: null, error: true };
-  }
-  
-  return { 
-    montoUSD: parseFloat(monto) / parseFloat(tasa), 
-    tasa: parseFloat(tasa) 
-  };
-};
-
-// Obtener todas las cuentas del usuario
 export const getCuentas = async () => {
   const { data, error } = await supabase
     .from('cuentas')
@@ -56,7 +20,20 @@ export const getCuentas = async () => {
   return data || [];
 };
 
-// Crear nueva cuenta
+export const getCuentaById = async (id) => {
+  const { data, error } = await supabase
+    .from('cuentas')
+    .select('*')
+    .eq('id', id)
+    .single();
+  
+  if (error) {
+    console.error('Error obteniendo cuenta:', error);
+    return null;
+  }
+  return data;
+};
+
 export const crearCuenta = async (cuenta) => {
   const { data: { user } } = await supabase.auth.getUser();
   
@@ -73,7 +50,40 @@ export const crearCuenta = async (cuenta) => {
   return data;
 };
 
-// Obtener todos los movimientos
+export const actualizarCuenta = async (id, cambios) => {
+  const { data, error } = await supabase
+    .from('cuentas')
+    .update(cambios)
+    .eq('id', id)
+    .select()
+    .single();
+  
+  if (error) {
+    console.error('Error actualizando cuenta:', error);
+    return null;
+  }
+  return data;
+};
+
+// Calcular saldo actual de una cuenta (saldo_inicial + movimientos)
+export const calcularSaldoActual = async (cuentaId) => {
+  const cuenta = await getCuentaById(cuentaId);
+  if (!cuenta) return 0;
+
+  const { data: movimientos } = await supabase
+    .from('movimientos')
+    .select('tipo, monto_original')
+    .eq('id_cuenta', cuentaId);
+
+  const totalMovimientos = (movimientos || []).reduce((sum, mov) => {
+    return sum + (mov.tipo === 'ingreso' ? parseFloat(mov.monto_original) : -parseFloat(mov.monto_original));
+  }, 0);
+
+  return parseFloat(cuenta.saldo_inicial) + totalMovimientos;
+};
+
+// ==================== MOVIMIENTOS ====================
+
 export const getMovimientos = async () => {
   const { data, error } = await supabase
     .from('movimientos')
@@ -91,7 +101,23 @@ export const getMovimientos = async () => {
   return data || [];
 };
 
-// Crear nuevo movimiento
+export const getMovimientosByCuenta = async (cuentaId) => {
+  const { data, error } = await supabase
+    .from('movimientos')
+    .select(`
+      *,
+      categoria:categorias(nombre, color)
+    `)
+    .eq('id_cuenta', cuentaId)
+    .order('fecha', { ascending: false });
+  
+  if (error) {
+    console.error('Error obteniendo movimientos:', error);
+    return [];
+  }
+  return data || [];
+};
+
 export const crearMovimiento = async (movimiento) => {
   const { data: { user } } = await supabase.auth.getUser();
   
@@ -108,7 +134,36 @@ export const crearMovimiento = async (movimiento) => {
   return data;
 };
 
-// Obtener categorías
+export const actualizarMovimiento = async (id, cambios) => {
+  const { data, error } = await supabase
+    .from('movimientos')
+    .update(cambios)
+    .eq('id', id)
+    .select()
+    .single();
+  
+  if (error) {
+    console.error('Error actualizando movimiento:', error);
+    return null;
+  }
+  return data;
+};
+
+export const eliminarMovimiento = async (id) => {
+  const { error } = await supabase
+    .from('movimientos')
+    .delete()
+    .eq('id', id);
+  
+  if (error) {
+    console.error('Error eliminando movimiento:', error);
+    return false;
+  }
+  return true;
+};
+
+// ==================== CATEGORÍAS ====================
+
 export const getCategorias = async () => {
   const { data, error } = await supabase
     .from('categorias')
@@ -122,7 +177,6 @@ export const getCategorias = async () => {
   return data || [];
 };
 
-// Crear categorías por defecto para nuevo usuario
 export const crearCategoriasDefault = async () => {
   const { data: { user } } = await supabase.auth.getUser();
   
@@ -134,6 +188,7 @@ export const crearCategoriasDefault = async () => {
     { nombre: 'Transporte', tipo: 'egreso', color: '#F59E0B', user_id: user?.id },
     { nombre: 'Servicios', tipo: 'egreso', color: '#EC4899', user_id: user?.id },
     { nombre: 'Entretenimiento', tipo: 'egreso', color: '#6366F1', user_id: user?.id },
+    { nombre: 'Salud', tipo: 'egreso', color: '#14B8A6', user_id: user?.id },
   ];
   
   const { data, error } = await supabase
@@ -144,6 +199,35 @@ export const crearCategoriasDefault = async () => {
   if (error) {
     console.error('Error creando categorías:', error);
     return [];
+  }
+  return data;
+};
+
+// ==================== TASAS DE CAMBIO ====================
+
+export const getTasas = async () => {
+  const { data, error } = await supabase
+    .from('tasas_cambio')
+    .select('*')
+    .order('fecha', { ascending: false });
+  
+  if (error) {
+    console.error('Error obteniendo tasas:', error);
+    return [];
+  }
+  return data || [];
+};
+
+export const crearTasa = async (fecha, valor) => {
+  const { data, error } = await supabase
+    .from('tasas_cambio')
+    .insert([{ fecha, valor }])
+    .select()
+    .single();
+  
+  if (error) {
+    console.error('Error creando tasa:', error);
+    return null;
   }
   return data;
 };
