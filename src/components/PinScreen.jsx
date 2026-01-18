@@ -17,18 +17,22 @@ export default function PinScreen() {
   const [step, setStep] = useState(hasPIN ? 'validate' : 'create');
   const [error, setError] = useState('');
   const [showBiometricPrompt, setShowBiometricPrompt] = useState(false);
-
-  useEffect(() => {
-    // Si tiene biometría activada, intentar autenticar automáticamente
-    if (hasPIN && biometricEnabled && step === 'validate') {
-      handleBiometricAuth();
-    }
-  }, [hasPIN, biometricEnabled]);
+  const [biometricError, setBiometricError] = useState('');
 
   const handleBiometricAuth = async () => {
-    const success = await authenticateWithBiometric();
-    if (!success) {
-      setError('Autenticación biométrica falló. Usa tu PIN.');
+    try {
+      setBiometricError('');
+      const success = await authenticateWithBiometric();
+      if (!success) {
+        setBiometricError('Autenticación biométrica falló. Usa tu PIN.');
+      }
+    } catch (error) {
+      console.error('Error biométrico:', error);
+      if (error.message === 'NO_CREDENTIAL') {
+        setBiometricError('Huella no configurada en este dispositivo. Entra con PIN y actívala en Ajustes.');
+      } else {
+        setBiometricError('Error al leer huella. Usa tu PIN.');
+      }
     }
   };
 
@@ -37,6 +41,7 @@ export default function PinScreen() {
       if (pin.length < 4) {
         setPin(pin + num);
         setError('');
+        setBiometricError('');
       }
     } else if (step === 'confirm') {
       if (confirmPin.length < 4) {
@@ -53,6 +58,7 @@ export default function PinScreen() {
       setConfirmPin(confirmPin.slice(0, -1));
     }
     setError('');
+    setBiometricError('');
   };
 
   useEffect(() => {
@@ -69,7 +75,6 @@ export default function PinScreen() {
     if (pin === confirmPin) {
       const success = await createPIN(pin);
       if (success) {
-        // INMEDIATAMENTE mostrar prompt de biometría
         setShowBiometricPrompt(true);
       }
     } else {
@@ -89,17 +94,25 @@ export default function PinScreen() {
   };
 
   const handleEnableBiometric = async () => {
-    const success = await enableBiometric();
-    setShowBiometricPrompt(false);
-    // Incluso si falla, cerrar el prompt
+    try {
+      const success = await enableBiometric();
+      if (success) {
+        setShowBiometricPrompt(false);
+        sessionStorage.setItem('isUnlocked', 'true');
+        window.location.reload();
+      }
+    } catch (error) {
+      alert('Error al activar huella: ' + error.message + '\n\nPuedes activarla más tarde desde Ajustes.');
+      handleSkipBiometric();
+    }
   };
 
   const handleSkipBiometric = () => {
     setShowBiometricPrompt(false);
-    // El usuario ya está desbloqueado, solo cierra el prompt
+    sessionStorage.setItem('isUnlocked', 'true');
+    window.location.reload();
   };
 
-  // COMPONENTE: Puntos del PIN (CENTRADOS)
   const PinDots = ({ currentLength }) => (
     <div className="flex justify-center gap-4 mb-8">
       {[1, 2, 3, 4].map((i) => (
@@ -152,11 +165,10 @@ export default function PinScreen() {
     </div>
   );
 
-  // PROMPT DE BIOMETRÍA (se muestra INMEDIATAMENTE después de crear PIN)
   if (showBiometricPrompt) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-600 via-purple-600 to-purple-800 flex items-center justify-center px-4">
-        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center animate-slide-up">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center">
           <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-6">
             <Fingerprint className="w-10 h-10 text-blue-600" />
           </div>
@@ -205,6 +217,12 @@ export default function PinScreen() {
         </p>
 
         <PinDots currentLength={step === 'confirm' ? confirmPin.length : pin.length} />
+
+        {biometricError && (
+          <div className="mb-6 px-6 py-3 bg-red-500/90 backdrop-blur-sm border border-red-300 rounded-xl mx-auto max-w-sm">
+            <p className="text-white font-medium text-sm">{biometricError}</p>
+          </div>
+        )}
 
         {error && (
           <div className="mb-6 px-6 py-3 bg-red-500/20 backdrop-blur-sm border border-red-300 rounded-xl mx-auto max-w-sm">

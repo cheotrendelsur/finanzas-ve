@@ -146,7 +146,6 @@ export default function Analytics() {
     <div className="pb-20 px-4 pt-6">
       <h1 className="text-2xl font-bold text-gray-800 mb-6">📊 Análisis Financiero</h1>
 
-      {/* Filtros Superiores */}
       <div className="space-y-4 mb-6">
         <div className="bg-gray-100 rounded-xl p-1 grid grid-cols-2 gap-1">
           <button
@@ -241,7 +240,6 @@ export default function Analytics() {
         )}
       </div>
 
-      {/* Gran Total */}
       <div className="bg-gradient-to-br from-blue-600 to-purple-600 rounded-3xl p-6 text-white shadow-lg mb-6">
         <p className="text-sm opacity-90 mb-2">
           Total {tipoFiltro === 'ingreso' ? 'Ingresos' : 'Egresos'} - {getPeriodoLabel()}
@@ -250,12 +248,10 @@ export default function Analytics() {
         <p className="text-xs opacity-75 mt-1">USD</p>
       </div>
 
-      {/* Gráfico de Pastel - SIN LEYENDA NATIVA */}
       {dataPorCategoria.length > 0 ? (
         <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 mb-6">
           <h3 className="text-lg font-semibold text-gray-800 mb-4">Distribución por Categoría</h3>
           
-          {/* GRÁFICO LIMPIO - Sin labels, sin leyenda nativa */}
           <ResponsiveContainer width="100%" height={300}>
             <PieChart>
               <Pie
@@ -276,7 +272,6 @@ export default function Analytics() {
             </PieChart>
           </ResponsiveContainer>
 
-          {/* LISTA PERSONALIZADA DEBAJO DEL GRÁFICO */}
           <div className="mt-6 space-y-3">
             {dataPorCategoria.map((cat, index) => (
               <div 
@@ -284,21 +279,17 @@ export default function Analytics() {
                 className="flex items-center justify-between p-4 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors"
               >
                 <div className="flex items-center gap-3 flex-1">
-                  {/* Punto de color */}
                   <div
                     className="w-5 h-5 rounded-full flex-shrink-0"
                     style={{ backgroundColor: cat.color }}
                   />
-                  {/* Nombre de categoría */}
                   <span className="font-semibold text-gray-800">{cat.name}</span>
                 </div>
                 
                 <div className="text-right">
-                  {/* Monto en USD */}
                   <p className="text-lg font-bold text-gray-900">
                     ${cat.value.toFixed(2)}
                   </p>
-                  {/* Porcentaje */}
                   <p className="text-sm font-medium text-gray-500">
                     {cat.percentage}%
                   </p>
@@ -313,7 +304,6 @@ export default function Analytics() {
         </div>
       )}
 
-      {/* Gráfico de Barras - Resumen */}
       {dataResumen.length > 0 && (
         <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100">
           <h3 className="text-lg font-semibold text-gray-800 mb-4">Resumen del Periodo</h3>

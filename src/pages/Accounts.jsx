@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Plus, Edit2, Trash2, DollarSign } from 'lucide-react';
 import { useUI } from '../context/UIContext';
 import { useAuth } from '../context/AuthContext';
 import AddAccount from '../components/AddAccount';
 import EditAccount from '../components/EditAccount';
-import { supabase } from '../supabaseClient';
+import { supabase, calcularSaldoActual } from '../supabaseClient';
 
 export default function Accounts({ cuentas, onRefresh }) {
   const { hideBottomNav } = useUI();
@@ -12,6 +12,19 @@ export default function Accounts({ cuentas, onRefresh }) {
   
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [editingAccount, setEditingAccount] = useState(null);
+  const [saldosActuales, setSaldosActuales] = useState({});
+
+  useEffect(() => {
+    cargarSaldos();
+  }, [cuentas]);
+
+  const cargarSaldos = async () => {
+    const saldos = {};
+    for (const cuenta of cuentas) {
+      saldos[cuenta.id] = await calcularSaldoActual(cuenta.id);
+    }
+    setSaldosActuales(saldos);
+  };
 
   const handleOpenAdd = () => {
     hideBottomNav();
@@ -24,7 +37,6 @@ export default function Accounts({ cuentas, onRefresh }) {
   };
 
   const handleDelete = async (cuenta) => {
-    // Requiere confirmación con PIN o biometría
     const confirmed = await requirePINForAction();
     
     if (!confirmed) {
@@ -32,7 +44,6 @@ export default function Accounts({ cuentas, onRefresh }) {
       return;
     }
 
-    // Verificar si tiene movimientos
     const { data: movimientos } = await supabase
       .from('movimientos')
       .select('id')
@@ -47,7 +58,6 @@ export default function Accounts({ cuentas, onRefresh }) {
       if (!deleteMovs) return;
     }
 
-    // Eliminar cuenta
     const { error } = await supabase
       .from('cuentas')
       .delete()
@@ -116,10 +126,10 @@ export default function Accounts({ cuentas, onRefresh }) {
               </div>
               
               <div className="pt-4 border-t border-gray-100">
-                <p className="text-sm text-gray-500 mb-1">Saldo Inicial</p>
+                <p className="text-sm text-gray-500 mb-1">Saldo Actual</p>
                 <p className="text-2xl font-bold text-gray-900">
                   {cuenta.tipo_moneda === 'USD' ? '$' : 'Bs. '}
-                  {parseFloat(cuenta.saldo_inicial).toLocaleString('es-VE', { 
+                  {(saldosActuales[cuenta.id] || 0).toLocaleString('es-VE', { 
                     minimumFractionDigits: 2, 
                     maximumFractionDigits: 2 
                   })}
@@ -130,7 +140,6 @@ export default function Accounts({ cuentas, onRefresh }) {
         </div>
       )}
 
-      {/* Modales */}
       {showAddAccount && (
         <AddAccount
           onClose={() => setShowAddAccount(false)}

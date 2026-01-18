@@ -16,7 +16,6 @@ export const AuthProvider = ({ children }) => {
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user || null);
       if (!session?.user) {
-        // Si no hay usuario, limpiar todo
         setIsUnlocked(false);
         sessionStorage.removeItem('isUnlocked');
       }
@@ -29,24 +28,37 @@ export const AuthProvider = ({ children }) => {
 
   const checkUser = async () => {
     try {
+      const hashParams = new URLSearchParams(window.location.hash.substring(1));
+      const searchParams = new URLSearchParams(window.location.search);
+      
+      const hasAuthParams = 
+        hashParams.has('access_token') || 
+        hashParams.has('refresh_token') ||
+        searchParams.has('code') ||
+        searchParams.has('token_hash');
+
+      if (hasAuthParams) {
+        console.log('🔐 [AUTH] Detectados parámetros de Magic Link, esperando procesamiento...');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+
       const { data: { session } } = await supabase.auth.getSession();
       setUser(session?.user || null);
       
       if (session?.user) {
         await loadPINSettings(session.user.id);
         
-        // PERSISTENCIA: Si ya estaba desbloqueado en esta sesión (refresh), mantenerlo
         const wasUnlocked = sessionStorage.getItem('isUnlocked') === 'true';
         if (wasUnlocked) {
           setIsUnlocked(true);
         }
       }
     } catch (error) {
-      console.error('Error checking user:', error);
+      console.error('❌ [AUTH] Error checking user:', error);
       setUser(null);
     } finally {
-      // SIEMPRE pasar loading a false
       setLoading(false);
+      console.log('✅ [AUTH] Inicialización completada');
     }
   };
 
@@ -62,7 +74,6 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Crear PIN
   const createPIN = async (pin) => {
     if (!user) return false;
     
@@ -70,10 +81,6 @@ export const AuthProvider = ({ children }) => {
       const hashedPIN = btoa(pin);
       localStorage.setItem(`pin_${user.id}`, hashedPIN);
       setHasPIN(true);
-      setIsUnlocked(true);
-      
-      // Persistir estado desbloqueado en sessionStorage
-      sessionStorage.setItem('isUnlocked', 'true');
       return true;
     } catch (error) {
       console.error('Error creating PIN:', error);
@@ -81,7 +88,6 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Validar PIN
   const validatePIN = async (pin) => {
     if (!user) return false;
     
@@ -91,7 +97,6 @@ export const AuthProvider = ({ children }) => {
       
       if (hashedPIN === storedPIN) {
         setIsUnlocked(true);
-        // Persistir estado desbloqueado en sessionStorage
         sessionStorage.setItem('isUnlocked', 'true');
         return true;
       }
@@ -102,7 +107,6 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Activar Biometría
   const enableBiometric = async () => {
     if (!user) return false;
     
@@ -148,18 +152,19 @@ export const AuthProvider = ({ children }) => {
       
       return false;
     } catch (error) {
-      console.error('Error enabling biometric:', error);
-      return false;
+      console.error('❌ [BIOMETRIC] Error enabling:', error);
+      throw error;
     }
   };
 
-  // Autenticar con Biometría
   const authenticateWithBiometric = async () => {
     if (!user || !biometricEnabled) return false;
     
     try {
       const storedCredential = localStorage.getItem(`biometric_credential_${user.id}`);
-      if (!storedCredential) return false;
+      if (!storedCredential) {
+        throw new Error('NO_CREDENTIAL');
+      }
 
       const credentialData = JSON.parse(storedCredential);
       
@@ -180,19 +185,17 @@ export const AuthProvider = ({ children }) => {
 
       if (assertion) {
         setIsUnlocked(true);
-        // Persistir estado desbloqueado en sessionStorage
         sessionStorage.setItem('isUnlocked', 'true');
         return true;
       }
       
       return false;
     } catch (error) {
-      console.error('Error authenticating with biometric:', error);
-      return false;
+      console.error('❌ [BIOMETRIC] Error authenticating:', error);
+      throw error;
     }
   };
 
-  // Verificar PIN para acciones críticas
   const requirePINForAction = async () => {
     return new Promise((resolve) => {
       if (biometricEnabled) {
@@ -208,6 +211,14 @@ export const AuthProvider = ({ children }) => {
                 resolve(false);
               }
             }
+          })
+          .catch(() => {
+            const pin = prompt('Ingresa tu PIN para continuar:');
+            if (pin) {
+              validatePIN(pin).then(resolve);
+            } else {
+              resolve(false);
+            }
           });
       } else {
         const pin = prompt('Ingresa tu PIN para continuar:');
@@ -220,30 +231,25 @@ export const AuthProvider = ({ children }) => {
     });
   };
 
-  // LOGOUT MEJORADO - Limpieza total
   const logout = async () => {
     try {
-      // 1. Cerrar sesión en Supabase
-      await supabase.auth.signOut();
+      console.log('🚪 [LOGOUT] Iniciando cierre de sesión...');
       
-      // 2. Limpiar estado local
       setIsUnlocked(false);
       setUser(null);
       setHasPIN(false);
       setBiometricEnabled(false);
       
-      // 3. Limpiar sessionStorage (estado de desbloqueado)
       sessionStorage.removeItem('isUnlocked');
       
-      // 4. NO limpiar localStorage del PIN (para que persista entre sesiones)
-      // El PIN y la biometría deben persistir incluso después del logout
+      await supabase.auth.signOut();
       
-      // 5. Recargar la página para limpiar cualquier estado residual
-      window.location.reload();
+      console.log('✅ [LOGOUT] Sesión cerrada correctamente');
+      
+      window.location.href = '/';
     } catch (error) {
-      console.error('Error during logout:', error);
-      // Forzar recarga incluso si hay error
-      window.location.reload();
+      console.error('❌ [LOGOUT] Error durante logout:', error);
+      window.location.href = '/';
     }
   };
 

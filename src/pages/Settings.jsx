@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
-import { User, DollarSign, Download, X, Check } from 'lucide-react';
+import { User, DollarSign, Download, Shield, Fingerprint, X } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { getTasas, crearTasa, getMovimientos } from '../supabaseClient';
 import { useUI } from '../context/UIContext';
+import { useAuth } from '../context/AuthContext';
 
 export default function Settings() {
   const { hideBottomNav, showNav } = useUI();
-  const [user, setUser] = useState(null);
+  const { user, biometricEnabled, enableBiometric, logout } = useAuth();
   const [showAddTasa, setShowAddTasa] = useState(false);
   const [tasasRecientes, setTasasRecientes] = useState([]);
   const [formTasa, setFormTasa] = useState({
@@ -15,29 +16,18 @@ export default function Settings() {
   });
   const [loading, setLoading] = useState(false);
   const [mensaje, setMensaje] = useState('');
+  const [biometricMessage, setBiometricMessage] = useState('');
   
-  // Exportación CSV
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
 
   useEffect(() => {
-    checkUser();
     cargarTasas();
   }, []);
-
-  const checkUser = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    setUser(user);
-  };
 
   const cargarTasas = async () => {
     const tasas = await getTasas();
     setTasasRecientes(tasas.slice(0, 10));
-  };
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    window.location.reload();
   };
 
   const handleOpenAddTasa = () => {
@@ -76,11 +66,37 @@ export default function Settings() {
     }
   };
 
-  // Generar CSV
+  const handleEnableBiometric = async () => {
+    setBiometricMessage('');
+    try {
+      const success = await enableBiometric();
+      if (success) {
+        setBiometricMessage('✓ Huella registrada correctamente en este dispositivo');
+        setTimeout(() => setBiometricMessage(''), 3000);
+      }
+    } catch (error) {
+      console.error('Error al registrar huella:', error);
+      
+      let errorMsg = '❌ Error al registrar huella: ';
+      
+      if (error.name === 'NotSupportedError') {
+        errorMsg += 'Tu dispositivo no soporta autenticación biométrica.';
+      } else if (error.name === 'NotAllowedError') {
+        errorMsg += 'Permiso denegado. Verifica los ajustes de tu navegador.';
+      } else if (error.name === 'SecurityError') {
+        errorMsg += 'Esta función solo funciona en HTTPS. Si estás en desarrollo, usa localhost.';
+      } else {
+        errorMsg += error.message || 'Dispositivo incompatible o huella no configurada en el sistema.';
+      }
+      
+      setBiometricMessage(errorMsg);
+      setTimeout(() => setBiometricMessage(''), 8000);
+    }
+  };
+
   const handleExportCSV = async () => {
     const movimientos = await getMovimientos();
     
-    // Filtrar por mes y año
     const filtrados = movimientos.filter(m => {
       const fecha = new Date(m.fecha);
       return fecha.getFullYear() === selectedYear && (fecha.getMonth() + 1) === selectedMonth;
@@ -91,10 +107,8 @@ export default function Settings() {
       return;
     }
 
-    // Ordenar cronológicamente (más antiguo primero)
     filtrados.sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
 
-    // Generar CSV
     const headers = ['Fecha', 'Tipo', 'Categoría', 'Cuenta', 'Monto USD'];
     const rows = filtrados.map(m => [
       new Date(m.fecha).toLocaleDateString('es-VE'),
@@ -109,7 +123,6 @@ export default function Settings() {
       ...rows.map(row => row.join(','))
     ].join('\n');
 
-    // Descargar
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
@@ -144,7 +157,47 @@ export default function Settings() {
     <div className="pb-20 px-4 pt-6">
       <h1 className="text-2xl font-bold text-gray-800 mb-6">⚙️ Configuración</h1>
 
-      {/* Gestión de Tasas */}
+      <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 mb-4">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
+            <Shield className="w-5 h-5 text-purple-600" />
+          </div>
+          <div>
+            <h2 className="font-semibold text-gray-800">Seguridad</h2>
+            <p className="text-sm text-gray-500">Gestionar acceso biométrico</p>
+          </div>
+        </div>
+
+        {biometricMessage && (
+          <div className={`mb-4 p-4 rounded-xl ${
+            biometricMessage.includes('✓')
+              ? 'bg-green-50 text-green-800'
+              : 'bg-red-50 text-red-800'
+          }`}>
+            <p className="text-sm">{biometricMessage}</p>
+          </div>
+        )}
+
+        <button
+          onClick={handleEnableBiometric}
+          disabled={biometricEnabled}
+          className={`w-full px-6 py-3 rounded-xl font-medium active:scale-95 transition-transform flex items-center justify-center gap-2 ${
+            biometricEnabled
+              ? 'bg-green-100 text-green-700 cursor-not-allowed'
+              : 'bg-purple-600 text-white'
+          }`}
+        >
+          <Fingerprint className="w-5 h-5" />
+          {biometricEnabled ? '✓ Huella Activa en este Dispositivo' : 'Registrar Huella en este Dispositivo'}
+        </button>
+
+        <p className="text-xs text-gray-500 mt-3 text-center">
+          {biometricEnabled 
+            ? 'Puedes usar tu huella en el login' 
+            : 'Activa tu huella para acceder más rápido'}
+        </p>
+      </div>
+
       <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 mb-4">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
@@ -165,7 +218,6 @@ export default function Settings() {
           + Agregar Tasa del Día
         </button>
 
-        {/* Tasas Recientes */}
         <div className="mt-6">
           <h3 className="text-sm font-semibold text-gray-700 mb-3">Tasas Recientes</h3>
           <div className="space-y-2 max-h-64 overflow-y-auto">
@@ -194,11 +246,10 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* Exportar Datos */}
       <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 mb-4">
         <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
-            <Download className="w-5 h-5 text-purple-600" />
+          <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+            <Download className="w-5 h-5 text-blue-600" />
           </div>
           <div>
             <h2 className="font-semibold text-gray-800">Exportar Datos</h2>
@@ -230,7 +281,7 @@ export default function Settings() {
 
         <button
           onClick={handleExportCSV}
-          className="w-full px-6 py-3 bg-purple-600 text-white rounded-xl font-medium active:scale-95 transition-transform"
+          className="w-full px-6 py-3 bg-blue-600 text-white rounded-xl font-medium active:scale-95 transition-transform"
         >
           📥 Descargar Reporte CSV
         </button>
@@ -240,7 +291,6 @@ export default function Settings() {
         </p>
       </div>
 
-      {/* Sección de Perfil - AL FINAL */}
       <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100">
         <div className="flex items-center gap-4 mb-4">
           <div className="w-14 h-14 bg-gradient-to-br from-blue-600 to-purple-600 rounded-full flex items-center justify-center">
@@ -253,14 +303,13 @@ export default function Settings() {
         </div>
 
         <button
-          onClick={handleLogout}
+          onClick={logout}
           className="w-full mt-4 px-6 py-3 bg-red-600 text-white rounded-xl font-medium active:scale-95 transition-transform"
         >
           Cerrar Sesión
         </button>
       </div>
 
-      {/* Modal Agregar Tasa */}
       {showAddTasa && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center sm:justify-center">
           <div className="bg-white w-full sm:max-w-lg sm:rounded-3xl rounded-t-3xl p-6 pb-8 animate-slide-up">
