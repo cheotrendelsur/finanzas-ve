@@ -1,15 +1,16 @@
 import { useState, useEffect } from 'react';
-import { X, Upload } from 'lucide-react';
-import { crearMovimiento } from '../supabaseClient';
+import { X } from 'lucide-react';
+import { crearMovimiento, getCuentas, getCategorias } from '../supabaseClient';
 import { useUI } from '../context/UIContext';
 import { useOffline } from '../context/OfflineContext';
 import { saveDraft, loadDraft, clearDraft } from '../utils/offlineManager';
 
-const DRAFT_NAME = 'add_transaction';
-
-export default function AddTransaction({ cuentas, categorias, onClose, onSuccess }) {
+export default function AddTransaction({ onClose, onSuccess }) {
   const { showNav } = useUI();
   const { online, updatePendingCount } = useOffline();
+  
+  const [cuentas, setCuentas] = useState([]);
+  const [categorias, setCategorias] = useState([]);
   
   const [form, setForm] = useState({
     tipo: 'egreso',
@@ -26,9 +27,29 @@ export default function AddTransaction({ cuentas, categorias, onClose, onSuccess
   const [loading, setLoading] = useState(false);
   const [mensaje, setMensaje] = useState('');
 
-  // 🔥 CARGAR BORRADOR AL MONTAR
   useEffect(() => {
-    const draft = loadDraft(DRAFT_NAME);
+    const cachedCuentas = localStorage.getItem('offline_cuentas');
+    const cachedCategorias = localStorage.getItem('offline_categorias');
+    
+    if (cachedCuentas) setCuentas(JSON.parse(cachedCuentas));
+    if (cachedCategorias) setCategorias(JSON.parse(cachedCategorias));
+    
+    getCuentas().then(data => {
+      if (data && data.length > 0) {
+        setCuentas(data);
+        localStorage.setItem('offline_cuentas', JSON.stringify(data));
+      }
+    }).catch(() => {});
+    
+    getCategorias().then(data => {
+      if (data && data.length > 0) {
+        setCategorias(data);
+        localStorage.setItem('offline_categorias', JSON.stringify(data));
+      }
+    }).catch(() => {});
+    
+    const draftName = `draft_${form.tipo}`;
+    const draft = loadDraft(draftName);
     if (draft) {
       setForm(draft);
       setMensaje('ℹ️ Borrador recuperado');
@@ -36,11 +57,11 @@ export default function AddTransaction({ cuentas, categorias, onClose, onSuccess
     }
   }, []);
 
-  // 🔥 GUARDAR BORRADOR EN CADA CAMBIO
   const handleChange = (field, value) => {
     const newForm = { ...form, [field]: value };
     setForm(newForm);
-    saveDraft(DRAFT_NAME, newForm);
+    const draftName = `draft_${newForm.tipo}`;
+    saveDraft(draftName, newForm);
   };
 
   const categoriasDisponibles = categorias.filter(c => c.tipo === form.tipo);
@@ -53,7 +74,6 @@ export default function AddTransaction({ cuentas, categorias, onClose, onSuccess
 
     setLoading(true);
 
-    const cuenta = cuentas.find(c => c.id === form.id_cuenta);
     let montoUSD = parseFloat(form.monto_original);
 
     if (form.moneda_original === 'BS' && form.tasa_cambio_usada) {
@@ -76,8 +96,8 @@ export default function AddTransaction({ cuentas, categorias, onClose, onSuccess
     setLoading(false);
 
     if (result) {
-      // 🔥 LIMPIAR BORRADOR DESPUÉS DE GUARDAR EXITOSAMENTE
-      clearDraft(DRAFT_NAME);
+      const draftName = `draft_${form.tipo}`;
+      clearDraft(draftName);
       
       if (result.isOffline) {
         setMensaje('📴 Guardado en dispositivo (Pendiente de sincronizar)');
@@ -101,11 +121,11 @@ export default function AddTransaction({ cuentas, categorias, onClose, onSuccess
   };
 
   const handleCancel = () => {
-    // Al cancelar, preguntar si quiere guardar el borrador
     if (form.monto_original || form.descripcion) {
       const keep = confirm('¿Guardar borrador para continuar después?');
       if (!keep) {
-        clearDraft(DRAFT_NAME);
+        const draftName = `draft_${form.tipo}`;
+        clearDraft(draftName);
       }
     }
     showNav();
@@ -125,7 +145,6 @@ export default function AddTransaction({ cuentas, categorias, onClose, onSuccess
           </button>
         </div>
 
-        {/* 🔥 INDICADOR DE ESTADO DE CONEXIÓN */}
         {!online && (
           <div className="mb-4 p-3 bg-orange-50 border border-orange-200 rounded-xl flex items-center gap-2">
             <span className="text-orange-600 text-sm font-medium">
