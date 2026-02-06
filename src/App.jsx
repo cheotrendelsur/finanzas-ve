@@ -11,6 +11,7 @@ import AccountDetails from './pages/AccountDetails';
 import Analytics from './pages/Analytics';
 import Accounts from './pages/Accounts';
 import Settings from './pages/Settings';
+import { OfflineProvider } from './context/OfflineContext';
 
 function AppContent() {
   const { user } = useAuth();
@@ -206,11 +207,13 @@ export default function App() {
   return (
     <AuthProvider>
       <AuthGuard>
-        <UIProvider>
-          <ExchangeRateProvider>
-            <AppContent />
-          </ExchangeRateProvider>
-        </UIProvider>
+        <OfflineProvider>
+          <UIProvider>
+            <ExchangeRateProvider>
+              <AppContent />
+            </ExchangeRateProvider>
+          </UIProvider>
+        </OfflineProvider>
       </AuthGuard>
     </AuthProvider>
   );

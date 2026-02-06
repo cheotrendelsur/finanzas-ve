@@ -3,7 +3,7 @@ import { ArrowLeft, TrendingUp, TrendingDown } from 'lucide-react';
 import { getMovimientosByCuenta, calcularSaldoActual, getCategorias } from '../supabaseClient';
 import { useExchangeRate } from '../context/ExchangeRateContext';
 import { useUI } from '../context/UIContext';
-import AddTransaction from '../components/AddTransaction';
+import EditTransaction from '../components/EditTransaction';
 
 export default function AccountDetails({ cuenta, cuentas, onBack, onRefresh }) {
   const { getExchangeRate } = useExchangeRate();
@@ -61,7 +61,6 @@ export default function AccountDetails({ cuenta, cuentas, onBack, onRefresh }) {
 
   return (
     <div className="pb-20 px-4 pt-6">
-      {/* Header */}
       <div className="flex items-center gap-4 mb-6">
         <button
           onClick={onBack}
@@ -75,7 +74,6 @@ export default function AccountDetails({ cuenta, cuentas, onBack, onRefresh }) {
         </div>
       </div>
 
-      {/* Saldo Actual */}
       <div className="bg-gradient-to-br from-blue-600 to-purple-600 rounded-3xl p-6 text-white shadow-lg mb-6">
         <p className="text-sm opacity-90 mb-2">Saldo Actual</p>
         <h2 className="text-4xl font-bold">
@@ -83,7 +81,6 @@ export default function AccountDetails({ cuenta, cuentas, onBack, onRefresh }) {
         </h2>
       </div>
 
-      {/* Lista de Movimientos */}
       <div className="space-y-3">
         <h3 className="text-lg font-semibold text-gray-800 px-2 mb-4">
           Historial de Movimientos
@@ -115,7 +112,6 @@ export default function AccountDetails({ cuenta, cuentas, onBack, onRefresh }) {
                 className="w-full bg-white rounded-2xl p-4 shadow-sm border border-gray-100 hover:border-blue-300 active:scale-98 transition-all text-left"
               >
                 <div className="flex items-start justify-between">
-                  {/* Lado Izquierdo */}
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
                       {esIngreso ? (
@@ -147,11 +143,9 @@ export default function AccountDetails({ cuenta, cuentas, onBack, onRefresh }) {
                     )}
                   </div>
 
-                  {/* Lado Derecho - Montos con Lógica Condicional */}
                   <div className="text-right ml-4">
                     {mov.moneda_movimiento === 'VES' ? (
                       <>
-                        {/* Caso A: Movimiento en VES */}
                         <p className={`text-xl font-bold ${
                           esIngreso ? 'text-green-600' : 'text-red-600'
                         }`}>
@@ -164,7 +158,6 @@ export default function AccountDetails({ cuenta, cuentas, onBack, onRefresh }) {
                       </>
                     ) : (
                       <>
-                        {/* Caso B: Movimiento en USD */}
                         <p className={`text-xl font-bold ${
                           esIngreso ? 'text-green-600' : 'text-red-600'
                         }`}>
@@ -181,16 +174,13 @@ export default function AccountDetails({ cuenta, cuentas, onBack, onRefresh }) {
         )}
       </div>
 
-      {/* Modal de Edición */}
       {editingMovimiento && (
-        <AddTransaction
-          tipo={editingMovimiento.tipo}
+        <EditTransaction
+          movimiento={editingMovimiento}
           cuentas={cuentas}
           categorias={categorias}
           onClose={handleCloseEdit}
           onSuccess={handleCloseEdit}
-          editMode={true}
-          movimientoData={editingMovimiento}
         />
       )}
     </div>

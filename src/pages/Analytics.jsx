@@ -3,6 +3,7 @@ import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveCo
 import { getMovimientos } from '../supabaseClient';
 
 export default function Analytics() {
+  // 🔥 AJUSTE: Valores por defecto cambiados a 'egreso' y 'mes'
   const [tipoFiltro, setTipoFiltro] = useState('egreso');
   const [modoFiltro, setModoFiltro] = useState('mes');
   const [añoSeleccionado, setAñoSeleccionado] = useState(new Date().getFullYear());

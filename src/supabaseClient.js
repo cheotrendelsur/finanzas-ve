@@ -1,8 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
+import { isOnline, addToOfflineQueue } from './utils/offlineManager';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-console.log("🔍 URL Supabase:", supabaseUrl);
+console.log("🔐 URL Supabase:", supabaseUrl);
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 // ==================== CUENTAS ====================
@@ -65,7 +66,6 @@ export const actualizarCuenta = async (id, cambios) => {
   return data;
 };
 
-// Calcular saldo actual de una cuenta (saldo_inicial + movimientos)
 export const calcularSaldoActual = async (cuentaId) => {
   const cuenta = await getCuentaById(cuentaId);
   if (!cuenta) return 0;
@@ -118,12 +118,32 @@ export const getMovimientosByCuenta = async (cuentaId) => {
   return data || [];
 };
 
+// 🔥 NUEVA FUNCIÓN: Crear movimiento con soporte offline
 export const crearMovimiento = async (movimiento) => {
   const { data: { user } } = await supabase.auth.getUser();
+  const payload = { ...movimiento, user_id: user?.id };
   
+  // Si no hay conexión, guardar en cola offline
+  if (!isOnline()) {
+    console.log('📴 Sin conexión - Guardando en cola offline');
+    const offlineOp = addToOfflineQueue({
+      type: 'create_movimiento',
+      payload
+    });
+    
+    // Retornar un objeto "temporal" para actualizar la UI optimistamente
+    return {
+      ...payload,
+      id: offlineOp.id,
+      isOffline: true,
+      created_at: new Date().toISOString()
+    };
+  }
+  
+  // Si hay conexión, guardar normalmente
   const { data, error } = await supabase
     .from('movimientos')
-    .insert([{ ...movimiento, user_id: user?.id }])
+    .insert([payload])
     .select()
     .single();
   
@@ -149,7 +169,14 @@ export const actualizarMovimiento = async (id, cambios) => {
   return data;
 };
 
+// 🔥 NUEVA FUNCIÓN: Eliminar movimiento
 export const eliminarMovimiento = async (id) => {
+  // No permitir eliminar movimientos offline (que empiezan con "offline_")
+  if (typeof id === 'string' && id.startsWith('offline_')) {
+    alert('No se pueden eliminar movimientos pendientes de sincronizar');
+    return false;
+  }
+  
   const { error } = await supabase
     .from('movimientos')
     .delete()
