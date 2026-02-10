@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, Trash2 } from 'lucide-react';
-import { actualizarMovimiento, eliminarMovimiento } from '../supabaseClient';
+import { actualizarMovimiento, eliminarMovimiento, obtenerTasaParaFecha } from '../supabaseClient';
 import { useUI } from '../context/UIContext';
 
 export default function EditTransaction({ movimiento, cuentas, categorias, onClose, onSuccess }) {
@@ -11,20 +11,106 @@ export default function EditTransaction({ movimiento, cuentas, categorias, onClo
     id_cuenta: movimiento.id_cuenta,
     id_categoria: movimiento.id_categoria,
     monto_original: movimiento.monto_original,
-    moneda_original: movimiento.moneda_original,
+    moneda: movimiento.moneda_movimiento === 'BS' ? 'VES' : (movimiento.moneda_movimiento || 'USD'),
     descripcion: movimiento.descripcion || '',
     fecha: movimiento.fecha,
-    tasa_cambio_usada: movimiento.tasa_cambio_usada || '',
+    tasa_cambio: movimiento.tasa_aplicada || '',
   });
   
   const [loading, setLoading] = useState(false);
+  const [loadingTasa, setLoadingTasa] = useState(false);
   const [mensaje, setMensaje] = useState('');
+  const [infoTasa, setInfoTasa] = useState('');
+
+  // Búsqueda automática de tasa al cambiar fecha o moneda
+  useEffect(() => {
+    if (form.moneda === 'VES' && form.fecha) {
+      buscarTasaAutomatica(form.fecha);
+    }
+  }, [form.fecha, form.moneda]);
+
+  const buscarTasaAutomatica = async (fecha) => {
+    setLoadingTasa(true);
+    setInfoTasa('🔍 Buscando tasa...');
+    
+    const resultadoTasa = await obtenerTasaParaFecha(fecha);
+    
+    if (resultadoTasa) {
+      setForm(prevForm => ({
+        ...prevForm,
+        tasa_cambio: resultadoTasa.valor.toString()
+      }));
+      
+      if (resultadoTasa.esExacta) {
+        setInfoTasa(`✅ Tasa exacta: ${resultadoTasa.valor} Bs/$ (${resultadoTasa.fecha})`);
+      } else {
+        setInfoTasa(`⚠️ Tasa más cercana: ${resultadoTasa.valor} Bs/$ (${resultadoTasa.fecha})`);
+      }
+    } else {
+      setInfoTasa('❌ No hay tasas registradas. Por favor ingresa una tasa manualmente.');
+      setForm(prevForm => ({ ...prevForm, tasa_cambio: '' }));
+    }
+    
+    setLoadingTasa(false);
+  };
 
   const categoriasDisponibles = categorias.filter(c => c.tipo === form.tipo);
 
+  const handleChange = (field, value) => {
+    // Validación anti-BS en tiempo real
+    if (field === 'moneda' && value === 'BS') {
+      value = 'VES';
+    }
+    
+    let newForm = { ...form, [field]: value };
+    
+    // ✅ NUEVA LÓGICA: Si cambia la cuenta, actualizar moneda automáticamente
+    if (field === 'id_cuenta') {
+      const cuentaSeleccionada = cuentas.find(c => c.id === value);
+      if (cuentaSeleccionada) {
+        newForm.moneda = cuentaSeleccionada.tipo_moneda;
+        
+        // Si la cuenta es VES, disparar búsqueda de tasa
+        if (cuentaSeleccionada.tipo_moneda === 'VES' && newForm.fecha) {
+          // La búsqueda se disparará automáticamente por el useEffect
+          setInfoTasa('🔍 Detectada cuenta en Bolívares, buscando tasa...');
+        } else if (cuentaSeleccionada.tipo_moneda === 'USD') {
+          // Si es USD, limpiar tasa
+          newForm.tasa_cambio = '';
+          setInfoTasa('');
+        }
+      }
+    }
+    
+    setForm(newForm);
+    
+    // Si cambió el tipo, limpiar categoría porque puede no estar disponible
+    if (field === 'tipo') {
+      setForm(prevForm => ({ ...prevForm, id_categoria: '' }));
+    }
+    
+    // Si cambió a VES manualmente, buscar tasa automáticamente
+    if (field === 'moneda' && value === 'VES' && form.fecha) {
+      buscarTasaAutomatica(form.fecha);
+    }
+    
+    // Si cambió de VES a USD manualmente, limpiar tasa
+    if (field === 'moneda' && value === 'USD') {
+      setForm(prevForm => ({ ...prevForm, tasa_cambio: '' }));
+      setInfoTasa('');
+    }
+  };
+
   const handleSubmit = async () => {
+    // Validaciones básicas
     if (!form.id_cuenta || !form.id_categoria || !form.monto_original) {
       setMensaje('Por favor completa todos los campos requeridos');
+      return;
+    }
+
+    // Validación crítica - Si es VES, debe tener tasa
+    if (form.moneda === 'VES' && !form.tasa_cambio) {
+      setMensaje('❌ Error: No se pudo obtener una tasa de cambio para esta fecha. Ingresa una manualmente.');
       return;
     }
 
@@ -32,19 +118,21 @@ export default function EditTransaction({ movimiento, cuentas, categorias, onClo
 
     let montoUSD = parseFloat(form.monto_original);
 
-    if (form.moneda_original === 'BS' && form.tasa_cambio_usada) {
-      montoUSD = parseFloat(form.monto_original) / parseFloat(form.tasa_cambio_usada);
+    // Si la moneda es VES, calcular equivalente en USD
+    if (form.moneda === 'VES' && form.tasa_cambio) {
+      montoUSD = parseFloat(form.monto_original) / parseFloat(form.tasa_cambio);
     }
 
+    // Estructura final estandarizada
     const cambios = {
       tipo: form.tipo,
       id_cuenta: form.id_cuenta,
       id_categoria: form.id_categoria,
       monto_original: parseFloat(form.monto_original),
-      moneda_original: form.moneda_original,
+      moneda_movimiento: form.moneda === 'BS' ? 'VES' : form.moneda,
       descripcion: form.descripcion || null,
       fecha: form.fecha,
-      tasa_cambio_usada: form.tasa_cambio_usada ? parseFloat(form.tasa_cambio_usada) : null,
+      tasa_aplicada: form.tasa_cambio ? parseFloat(form.tasa_cambio) : null,
       monto_usd_final: montoUSD
     };
 
@@ -110,7 +198,7 @@ export default function EditTransaction({ movimiento, cuentas, categorias, onClo
         <div className="space-y-4">
           <div className="bg-gray-100 rounded-xl p-1 grid grid-cols-2 gap-1">
             <button
-              onClick={() => setForm({ ...form, tipo: 'ingreso' })}
+              onClick={() => handleChange('tipo', 'ingreso')}
               className={`py-3 rounded-lg font-medium transition-all active:scale-95 ${
                 form.tipo === 'ingreso'
                   ? 'bg-green-600 text-white shadow-md'
@@ -120,7 +208,7 @@ export default function EditTransaction({ movimiento, cuentas, categorias, onClo
               💰 Ingreso
             </button>
             <button
-              onClick={() => setForm({ ...form, tipo: 'egreso' })}
+              onClick={() => handleChange('tipo', 'egreso')}
               className={`py-3 rounded-lg font-medium transition-all active:scale-95 ${
                 form.tipo === 'egreso'
                   ? 'bg-red-600 text-white shadow-md'
@@ -137,7 +225,7 @@ export default function EditTransaction({ movimiento, cuentas, categorias, onClo
             </label>
             <select
               value={form.id_cuenta}
-              onChange={(e) => setForm({ ...form, id_cuenta: e.target.value })}
+              onChange={(e) => handleChange('id_cuenta', e.target.value)}
               className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-blue-500 focus:outline-none text-base"
             >
               <option value="">Selecciona una cuenta</option>
@@ -147,6 +235,12 @@ export default function EditTransaction({ movimiento, cuentas, categorias, onClo
                 </option>
               ))}
             </select>
+            {/* ✅ NUEVO: Indicador visual de moneda auto-seleccionada */}
+            {form.id_cuenta && (
+              <p className="text-xs text-blue-600 mt-1">
+                💡 Moneda establecida automáticamente: {form.moneda === 'VES' ? 'Bolívares (Bs)' : 'Dólares ($)'}
+              </p>
+            )}
           </div>
 
           <div>
@@ -155,7 +249,7 @@ export default function EditTransaction({ movimiento, cuentas, categorias, onClo
             </label>
             <select
               value={form.id_categoria}
-              onChange={(e) => setForm({ ...form, id_categoria: e.target.value })}
+              onChange={(e) => handleChange('id_categoria', e.target.value)}
               className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-blue-500 focus:outline-none text-base"
             >
               <option value="">Selecciona una categoría</option>
@@ -178,7 +272,7 @@ export default function EditTransaction({ movimiento, cuentas, categorias, onClo
                 step="0.01"
                 placeholder="0.00"
                 value={form.monto_original}
-                onChange={(e) => setForm({ ...form, monto_original: e.target.value })}
+                onChange={(e) => handleChange('monto_original', e.target.value)}
                 className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-blue-500 focus:outline-none text-base"
               />
             </div>
@@ -188,32 +282,22 @@ export default function EditTransaction({ movimiento, cuentas, categorias, onClo
                 Moneda *
               </label>
               <select
-                value={form.moneda_original}
-                onChange={(e) => setForm({ ...form, moneda_original: e.target.value })}
-                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-blue-500 focus:outline-none text-base"
+                value={form.moneda}
+                onChange={(e) => handleChange('moneda', e.target.value)}
+                disabled={!!form.id_cuenta} // ✅ NUEVO: Deshabilitar si ya hay cuenta seleccionada
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-blue-500 focus:outline-none text-base disabled:bg-gray-100 disabled:cursor-not-allowed"
               >
                 <option value="USD">USD ($)</option>
-                <option value="BS">BS (Bs)</option>
+                <option value="VES">BS (Bs)</option>
               </select>
+              {/* ✅ NUEVO: Texto explicativo */}
+              {form.id_cuenta && (
+                <p className="text-xs text-gray-500 mt-1">
+                  Moneda bloqueada según la cuenta
+                </p>
+              )}
             </div>
           </div>
-
-          {form.moneda_original === 'BS' && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Tasa de Cambio (Bs/$)
-              </label>
-              <input
-                type="number"
-                inputMode="decimal"
-                step="0.01"
-                placeholder="Ej: 36.50"
-                value={form.tasa_cambio_usada}
-                onChange={(e) => setForm({ ...form, tasa_cambio_usada: e.target.value })}
-                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-blue-500 focus:outline-none text-base"
-              />
-            </div>
-          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -221,11 +305,47 @@ export default function EditTransaction({ movimiento, cuentas, categorias, onClo
             </label>
             <input
               type="date"
-              value={form.fecha}
-              onChange={(e) => setForm({ ...form, fecha: e.target.value })}
+              value={form.fecha} 
+              onChange={(e) => handleChange('fecha', e.target.value)}
               className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-blue-500 focus:outline-none text-base"
             />
           </div>
+
+          {form.moneda === 'VES' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Tasa de Cambio (Bs/$) *
+              </label>
+              
+              {infoTasa && (
+                <div className={`mb-2 p-2 rounded-lg text-xs ${
+                  infoTasa.includes('✅') 
+                    ? 'bg-green-50 text-green-700'
+                    : infoTasa.includes('⚠️')
+                    ? 'bg-yellow-50 text-yellow-700'
+                    : infoTasa.includes('🔍')
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'bg-red-50 text-red-700'
+                }`}>
+                  {infoTasa}
+                </div>
+              )}
+              
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                placeholder="Ej: 36.50"
+                value={form.tasa_cambio}
+                onChange={(e) => handleChange('tasa_cambio', e.target.value)}
+                disabled={loadingTasa}
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-blue-500 focus:outline-none text-base disabled:bg-gray-100 disabled:cursor-not-allowed"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                💡 La tasa se busca automáticamente según la fecha
+              </p>
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -233,7 +353,7 @@ export default function EditTransaction({ movimiento, cuentas, categorias, onClo
             </label>
             <textarea
               value={form.descripcion}
-              onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
+              onChange={(e) => handleChange('descripcion', e.target.value)}
               placeholder="Ej: Compra en supermercado"
               rows="3"
               className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-blue-500 focus:outline-none text-base resize-none"
@@ -242,15 +362,15 @@ export default function EditTransaction({ movimiento, cuentas, categorias, onClo
 
           <button
             onClick={handleSubmit}
-            disabled={loading}
+            disabled={loading || loadingTasa}
             className="w-full bg-blue-600 text-white py-4 rounded-xl font-semibold text-lg active:scale-98 transition-transform shadow-lg disabled:opacity-50"
           >
-            {loading ? 'Guardando...' : '💾 Guardar Cambios'}
+            {loading ? 'Guardando...' : loadingTasa ? 'Cargando tasa...' : '💾 Guardar Cambios'}
           </button>
 
           <button
             onClick={handleDelete}
-            disabled={loading}
+            disabled={loading || loadingTasa}
             className="w-full bg-red-600 text-white py-4 rounded-xl font-semibold text-lg active:scale-98 transition-transform shadow-lg disabled:opacity-50 flex items-center justify-center gap-2"
           >
             <Trash2 className="w-5 h-5" />

@@ -6,123 +6,231 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+interface Movimiento {
+  fecha: string
+  tipo: string
+  categoria: { nombre: string } | null
+  cuenta: { nombre: string } | null
+  moneda_movimiento: string
+  monto_original: number
+  tasa_aplicada: number | null
+  monto_usd_final: number
+}
+
 serve(async (req) => {
+  // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
   try {
-    console.log("🚀 Iniciando generación de reporte...")
+    // Inicializar cliente de Supabase
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '' 
-    )
-
-    const { data: { users }, error: userError } = await supabaseClient.auth.admin.listUsers()
-    
-    if (userError || !users || users.length === 0) {
-      throw new Error('No se encontró ningún usuario.')
-    }
-
-    const user = users[0]
-    console.log(`👤 Usuario: ${user.email}`)
-
-    // --- CORRECCIÓN DE FECHAS ---
+    // PASO 1: Calcular el mes anterior
     const now = new Date()
+    const mesAnterior = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    const añoAnterior = mesAnterior.getFullYear()
+    const mesNumero = mesAnterior.getMonth() + 1
     
-    // Calcular "Mes Anterior" de forma segura (automáticamente maneja años bisiestos y cambio de año)
-    // Ejemplo: Si hoy es 16 de Enero 2026 -> startDate será 1 de Diciembre 2025
-    const startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    // Primer y último día del mes anterior
+    const primerDia = new Date(añoAnterior, mesNumero - 1, 1)
+    const ultimoDia = new Date(añoAnterior, mesNumero, 0)
     
-    // Calcular "Límite superior" (1ro de este mes)
-    // Ejemplo: Si hoy es 16 de Enero 2026 -> endDate será 1 de Enero 2026
-    const endDate = new Date(now.getFullYear(), now.getMonth(), 1)
+    const fechaInicio = primerDia.toISOString().split('T')[0]
+    const fechaFin = ultimoDia.toISOString().split('T')[0]
 
-    // Convertir a texto YYYY-MM-DD para Supabase
-    const startStr = startDate.toISOString().split('T')[0]
-    const endStr = endDate.toISOString().split('T')[0]
-    
-    const monthName = startDate.toLocaleDateString('es-VE', { month: 'long', year: 'numeric' })
-    
-    console.log(`📅 Buscando desde ${startStr} hasta ${endStr}`)
-    // -----------------------------
+    console.log(`📅 Generando reporte del mes: ${mesNumero}/${añoAnterior}`)
+    console.log(`📅 Rango: ${fechaInicio} a ${fechaFin}`)
 
-    const { data: movimientos, error: movError } = await supabaseClient
-      .from('movimientos') 
+    // PASO 2: Obtener todos los movimientos del mes anterior
+    const { data: movimientos, error: movError } = await supabase
+      .from('movimientos')
       .select(`
         *,
-        cuenta:cuentas(nombre),
-        categoria:categorias(nombre)
+        categoria:categorias(nombre),
+        cuenta:cuentas(nombre)
       `)
-      .eq('user_id', user.id)
-      .gte('fecha', startStr) // Usamos la fecha segura
-      .lt('fecha', endStr)    // Usamos la fecha segura
+      .gte('fecha', fechaInicio)
+      .lte('fecha', fechaFin)
       .order('fecha', { ascending: true })
 
-    if (movError) throw movError
-
-    console.log(`📊 Movimientos encontrados: ${movimientos?.length || 0}`)
-
-    if (!movimientos || movimientos.length === 0) {
-       await enviarCorreo(user.email, `Reporte ${monthName} (Vacío)`, `<p>No hubo movimientos en ${monthName}.</p>`, null)
-       return new Response(JSON.stringify({ message: 'Reporte vacío enviado' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    if (movError) {
+      throw new Error(`Error obteniendo movimientos: ${movError.message}`)
     }
 
-    // Generar CSV
-    const headers = ['Fecha', 'Tipo', 'Categoría', 'Cuenta', 'Monto USD']
-    const rows = movimientos.map(m => [
-      new Date(m.fecha).toLocaleDateString('es-VE'),
-      m.tipo === 'ingreso' ? 'Ingreso' : 'Egreso',
-      m.categoria?.nombre || 'Sin categoría',
-      m.cuenta?.nombre || 'N/A',
-      parseFloat(m.monto_usd_final).toFixed(2)
-    ])
+    if (!movimientos || movimientos.length === 0) {
+      console.log('ℹ️ No hay movimientos para el mes anterior')
+      return new Response(
+        JSON.stringify({ message: 'No hay movimientos para reportar', periodo: `${mesNumero}/${añoAnterior}` }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
 
-    const csvContent = [headers.join(','), ...rows.map(row => row.join(','))].join('\n')
-    const csvBase64 = btoa(csvContent)
+    console.log(`✅ Encontrados ${movimientos.length} movimientos`)
 
-    // Enviar con CSV
-    await enviarCorreo(
-      user.email, 
-      `📊 Reporte Mensual - ${monthName}`, 
-      `<h1>Hola!</h1><p>Adjunto tienes tu reporte de <strong>${monthName}</strong> con <strong>${movimientos.length}</strong> movimientos.</p>`,
-      { filename: `Reporte_${monthName}.csv`, content: csvBase64 }
-    )
+    // PASO 3: Obtener todos los usuarios únicos de los movimientos
+    const userIds = [...new Set(movimientos.map(m => m.user_id))]
+    
+    // PASO 4: Obtener emails de los usuarios
+    const { data: usuarios, error: userError } = await supabase.auth.admin.listUsers()
+    
+    if (userError) {
+      throw new Error(`Error obteniendo usuarios: ${userError.message}`)
+    }
+
+    // PASO 5: Generar y enviar reporte para cada usuario
+    const resendApiKey = Deno.env.get('RESEND_API_KEY')
+    
+    if (!resendApiKey) {
+      console.warn('⚠️ RESEND_API_KEY no configurada. Los emails no se enviarán.')
+    }
+
+    for (const userId of userIds) {
+      const usuario = usuarios.users.find(u => u.id === userId)
+      if (!usuario || !usuario.email) {
+        console.log(`⚠️ Usuario ${userId} sin email, saltando...`)
+        continue
+      }
+
+      // Filtrar movimientos de este usuario
+      const movimientosUsuario = movimientos.filter(m => m.user_id === userId)
+      
+      // Generar CSV
+      const csv = generarCSV(movimientosUsuario as Movimiento[])
+      
+      // Enviar email
+      if (resendApiKey) {
+        await enviarEmail(usuario.email, csv, mesNumero, añoAnterior, resendApiKey)
+        console.log(`✅ Reporte enviado a ${usuario.email}`)
+      } else {
+        console.log(`📧 Reporte generado para ${usuario.email} (${movimientosUsuario.length} movimientos)`)
+        console.log('CSV Preview:', csv.split('\n').slice(0, 3).join('\n'))
+      }
+    }
 
     return new Response(
-      JSON.stringify({ success: true }),
+      JSON.stringify({ 
+        success: true, 
+        periodo: `${mesNumero}/${añoAnterior}`,
+        usuarios: userIds.length,
+        movimientos: movimientos.length
+      }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
 
   } catch (error) {
-    console.error("🚨 Error:", error.message)
+    console.error('❌ Error:', error)
     return new Response(
       JSON.stringify({ error: error.message }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   }
 })
 
-async function enviarCorreo(to, subject, html, attachment) {
-  const resendApiKey = Deno.env.get('RESEND_API_KEY')
-  const body = {
-    from: 'onboarding@resend.dev',
-    to: to,
-    subject: subject,
-    html: html,
-    attachments: attachment ? [attachment] : []
-  }
-  
-  const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
+/**
+ * Genera el CSV con el formato detallado
+ */
+function generarCSV(movimientos: Movimiento[]): string {
+  const headers = [
+    'Fecha',
+    'Tipo',
+    'Categoría',
+    'Cuenta',
+    'Moneda Original',
+    'Monto Original',
+    'Tasa Aplicada',
+    'Monto USD Final'
+  ]
+
+  const rows = movimientos.map(m => [
+    formatearFecha(m.fecha),
+    m.tipo === 'ingreso' ? 'Ingreso' : 'Egreso',
+    m.categoria?.nombre || 'Sin categoría',
+    m.cuenta?.nombre || 'N/A',
+    m.moneda_movimiento || 'USD',
+    parseFloat(m.monto_original?.toString() || '0').toFixed(2),
+    m.tasa_aplicada ? parseFloat(m.tasa_aplicada.toString()).toFixed(2) : 'N/A',
+    parseFloat(m.monto_usd_final?.toString() || '0').toFixed(2)
+  ])
+
+  return [
+    headers.join(','),
+    ...rows.map(row => row.map(cell => {
+      // Escapar comas y comillas
+      if (typeof cell === 'string' && (cell.includes(',') || cell.includes('"'))) {
+        return `"${cell.replace(/"/g, '""')}"`
+      }
+      return cell
+    }).join(','))
+  ].join('\n')
+}
+
+/**
+ * Formatea una fecha de YYYY-MM-DD a DD/MM/YYYY
+ */
+function formatearFecha(fechaStr: string): string {
+  const [year, month, day] = fechaStr.split('-')
+  return `${day}/${month}/${year}`
+}
+
+/**
+ * Envía el email con el CSV adjunto usando Resend
+ */
+async function enviarEmail(
+  destinatario: string, 
+  csvContent: string, 
+  mes: number, 
+  año: number,
+  apiKey: string
+): Promise<void> {
+  const mesesNombres = [
+    'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+    'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+  ]
+  const nombreMes = mesesNombres[mes - 1]
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      from: 'Finanzas VE <onboarding@resend.dev>', // ⚠️ Cambiar por tu dominio verificado
+      to: ['chechechristiansen@gmail.com'],
+      subject: `📊 Reporte Mensual de Finanzas - ${nombreMes} ${año}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #4F46E5;">Reporte Mensual de Finanzas</h2>
+          <p>Hola,</p>
+          <p>Adjunto encontrarás tu reporte detallado de movimientos del mes de <strong>${nombreMes} ${año}</strong>.</p>
+          <p>El archivo CSV incluye:</p>
+          <ul>
+            <li>Fecha de cada movimiento</li>
+            <li>Tipo (Ingreso/Egreso)</li>
+            <li>Categoría</li>
+            <li>Cuenta</li>
+            <li>Moneda original y monto</li>
+            <li>Tasa de cambio aplicada</li>
+            <li>Monto en USD</li>
+          </ul>
+          <p style="margin-top: 20px;">Saludos,<br><strong>Finanzas VE</strong></p>
+        </div>
+      `,
+      attachments: [
+        {
+          filename: `Reporte_Finanzas_${nombreMes}_${año}.csv`,
+          content: btoa(csvContent) // Base64 encode
+        }
+      ]
+    })
   })
-  
-  if (!res.ok) {
-    const err = await res.json()
-    console.error("Error Resend:", err)
-    throw new Error(JSON.stringify(err))
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(`Error enviando email: ${error}`)
   }
 }

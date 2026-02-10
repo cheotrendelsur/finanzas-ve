@@ -14,3 +14,65 @@ The React Compiler is not enabled on this template because of its impact on dev 
 ## Expanding the ESLint configuration
 
 If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+
+```
+finanzas-ve
+├─ eslint.config.js
+├─ index.html
+├─ package-lock.json
+├─ package.json
+├─ public
+│  ├─ icon-192.png
+│  ├─ icon-512.png
+│  ├─ manifest.json
+│  └─ vite.svg
+├─ README.md
+├─ src
+│  ├─ App.css
+│  ├─ App.jsx
+│  ├─ assets
+│  │  └─ react.svg
+│  ├─ components
+│  │  ├─ AddAccount.jsx
+│  │  ├─ AddTransaction.jsx
+│  │  ├─ AuthGuard.jsx
+│  │  ├─ BottomNav.jsx
+│  │  ├─ EditAccount.jsx
+│  │  ├─ EditTransaction.jsx
+│  │  └─ PinScreen.jsx
+│  ├─ context
+│  │  ├─ AuthContext.jsx
+│  │  ├─ ExchangeRateContext.jsx
+│  │  ├─ OfflineContext.jsx
+│  │  └─ UIContext.jsx
+│  ├─ index.css
+│  ├─ main.jsx
+│  ├─ pages
+│  │  ├─ AccountDetails.jsx
+│  │  ├─ Accounts.jsx
+│  │  ├─ Analytics.jsx
+│  │  ├─ Home.jsx
+│  │  └─ Settings.jsx
+│  ├─ supabaseClient.js
+│  └─ utils
+│     └─ offlineManager.js
+├─ supabase
+│  ├─ .temp
+│  │  ├─ cli-latest
+│  │  ├─ gotrue-version
+│  │  ├─ pooler-url
+│  │  ├─ postgres-version
+│  │  ├─ project-ref
+│  │  ├─ rest-version
+│  │  ├─ storage-migration
+│  │  └─ storage-version
+│  ├─ config.toml
+│  └─ functions
+│     └─ send-monthly-report
+│        ├─ .npmrc
+│        ├─ deno.json
+│        └─ index.ts
+├─ vercel.json
+└─ vite.config.js
+
+```

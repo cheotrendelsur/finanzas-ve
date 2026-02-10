@@ -4,6 +4,7 @@ import { getMovimientosByCuenta, calcularSaldoActual, getCategorias } from '../s
 import { useExchangeRate } from '../context/ExchangeRateContext';
 import { useUI } from '../context/UIContext';
 import EditTransaction from '../components/EditTransaction';
+import { formatDateToDisplay, formatCurrency } from '../utils/formatters'; // ✅ TAREA 3: Importar utilidad
 
 export default function AccountDetails({ cuenta, cuentas, onBack, onRefresh }) {
   const { getExchangeRate } = useExchangeRate();
@@ -46,14 +47,6 @@ export default function AccountDetails({ cuenta, cuentas, onBack, onRefresh }) {
     onRefresh?.();
   };
 
-  const formatearMonto = (monto, moneda) => {
-    const simbolo = moneda === 'USD' ? '$' : 'Bs. ';
-    return simbolo + parseFloat(monto).toLocaleString('es-VE', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    });
-  };
-
   const calcularEquivalenteUSD = (montoVES, tasa) => {
     if (!tasa) return 0;
     return parseFloat(montoVES) / parseFloat(tasa);
@@ -77,7 +70,7 @@ export default function AccountDetails({ cuenta, cuentas, onBack, onRefresh }) {
       <div className="bg-gradient-to-br from-blue-600 to-purple-600 rounded-3xl p-6 text-white shadow-lg mb-6">
         <p className="text-sm opacity-90 mb-2">Saldo Actual</p>
         <h2 className="text-4xl font-bold">
-          {formatearMonto(saldoActual, cuenta.tipo_moneda)}
+          {formatCurrency(saldoActual, cuenta.tipo_moneda)}
         </h2>
       </div>
 
@@ -123,13 +116,12 @@ export default function AccountDetails({ cuenta, cuentas, onBack, onRefresh }) {
                         {mov.categoria?.nombre || mov.descripcion || (esIngreso ? 'Ingreso' : 'Egreso')}
                       </p>
                     </div>
+                    
+                    {/* ✅ TAREA 3: CORRECCIÓN DE FECHA - Usar formatDateToDisplay */}
                     <p className="text-sm text-gray-500">
-                      {new Date(mov.fecha).toLocaleDateString('es-VE', {
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric'
-                      })}
+                      {formatDateToDisplay(mov.fecha)}
                     </p>
+                    
                     {mov.categoria && (
                       <span
                         className="inline-block mt-2 px-2 py-1 rounded-lg text-xs font-medium"
@@ -150,7 +142,7 @@ export default function AccountDetails({ cuenta, cuentas, onBack, onRefresh }) {
                           esIngreso ? 'text-green-600' : 'text-red-600'
                         }`}>
                           {esIngreso ? '+' : '-'}
-                          {formatearMonto(mov.monto_original, 'VES')}
+                          {formatCurrency(mov.monto_original, 'VES')}
                         </p>
                         <p className="text-xs text-gray-400 mt-1">
                           ≈ ${montoUSD.toFixed(2)}
@@ -162,7 +154,7 @@ export default function AccountDetails({ cuenta, cuentas, onBack, onRefresh }) {
                           esIngreso ? 'text-green-600' : 'text-red-600'
                         }`}>
                           {esIngreso ? '+' : '-'}
-                          {formatearMonto(mov.monto_original, 'USD')}
+                          {formatCurrency(mov.monto_original, 'USD')}
                         </p>
                       </>
                     )}

@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
-import { crearMovimiento, getCuentas, getCategorias } from '../supabaseClient';
+import { crearMovimiento, getCuentas, getCategorias, obtenerTasaParaFecha } from '../supabaseClient';
 import { useUI } from '../context/UIContext';
 import { useOffline } from '../context/OfflineContext';
 import { saveDraft, loadDraft, clearDraft } from '../utils/offlineManager';
 
-export default function AddTransaction({ onClose, onSuccess }) {
+export default function AddTransaction({ tipo: tipoInicial = 'egreso', onClose, onSuccess }) {
   const { showNav } = useUI();
   const { online, updatePendingCount } = useOffline();
   
@@ -13,21 +13,23 @@ export default function AddTransaction({ onClose, onSuccess }) {
   const [categorias, setCategorias] = useState([]);
   
   const [form, setForm] = useState({
-    tipo: 'egreso',
+    tipo: tipoInicial,
     id_cuenta: '',
     id_categoria: '',
     monto_original: '',
-    moneda_original: 'USD',
+    moneda: 'USD',
     descripcion: '',
     fecha: new Date().toISOString().split('T')[0],
-    tasa_cambio_usada: '',
-    monto_usd_final: ''
+    tasa_cambio: ''
   });
   
   const [loading, setLoading] = useState(false);
+  const [loadingTasa, setLoadingTasa] = useState(false);
   const [mensaje, setMensaje] = useState('');
+  const [infoTasa, setInfoTasa] = useState('');
 
   useEffect(() => {
+    // Cargar datos básicos
     const cachedCuentas = localStorage.getItem('offline_cuentas');
     const cachedCategorias = localStorage.getItem('offline_categorias');
     
@@ -48,27 +50,123 @@ export default function AddTransaction({ onClose, onSuccess }) {
       }
     }).catch(() => {});
     
+    // Cargar borrador específico del tipo
     const draftName = `draft_${form.tipo}`;
     const draft = loadDraft(draftName);
-    if (draft) {
+    
+    if (draft && draft.tipo === form.tipo) {
+      // Validación anti-BS
+      if (draft.moneda === 'BS') {
+        draft.moneda = 'VES';
+      }
+      
       setForm(draft);
       setMensaje('ℹ️ Borrador recuperado');
       setTimeout(() => setMensaje(''), 2000);
+      
+      // Si el borrador tiene moneda VES y fecha, buscar tasa automáticamente
+      if (draft.moneda === 'VES' && draft.fecha) {
+        buscarTasaAutomatica(draft.fecha);
+      }
     }
-  }, []);
+  }, [form.tipo]);
+
+  // Búsqueda automática de tasa al cambiar fecha o moneda
+  useEffect(() => {
+    if (form.moneda === 'VES' && form.fecha) {
+      buscarTasaAutomatica(form.fecha);
+    }
+  }, [form.fecha, form.moneda]);
+
+  const buscarTasaAutomatica = async (fecha) => {
+    setLoadingTasa(true);
+    setInfoTasa('🔍 Buscando tasa...');
+    
+    const resultadoTasa = await obtenerTasaParaFecha(fecha);
+    
+    if (resultadoTasa) {
+      const newForm = { ...form, tasa_cambio: resultadoTasa.valor.toString() };
+      setForm(newForm);
+      
+      if (resultadoTasa.esExacta) {
+        setInfoTasa(`✅ Tasa exacta: ${resultadoTasa.valor} Bs/$ (${resultadoTasa.fecha})`);
+      } else {
+        setInfoTasa(`⚠️ Tasa más cercana: ${resultadoTasa.valor} Bs/$ (${resultadoTasa.fecha})`);
+      }
+      
+      // Guardar en borrador
+      const draftName = `draft_${newForm.tipo}`;
+      saveDraft(draftName, newForm);
+    } else {
+      setInfoTasa('❌ No hay tasas registradas. Por favor ingresa una tasa manualmente.');
+      setForm({ ...form, tasa_cambio: '' });
+    }
+    
+    setLoadingTasa(false);
+  };
 
   const handleChange = (field, value) => {
-    const newForm = { ...form, [field]: value };
+    // Validación anti-BS en tiempo real
+    if (field === 'moneda' && value === 'BS') {
+      value = 'VES';
+    }
+    
+    let newForm = { ...form, [field]: value };
+    
+    // ✅ NUEVA LÓGICA: Si cambia la cuenta, actualizar moneda automáticamente
+    if (field === 'id_cuenta') {
+      const cuentaSeleccionada = cuentas.find(c => c.id === value);
+      if (cuentaSeleccionada) {
+        newForm.moneda = cuentaSeleccionada.tipo_moneda;
+        
+        // Si la cuenta es VES, disparar búsqueda de tasa
+        if (cuentaSeleccionada.tipo_moneda === 'VES' && newForm.fecha) {
+          // La búsqueda se disparará automáticamente por el useEffect
+          setInfoTasa('🔍 Detectada cuenta en Bolívares, buscando tasa...');
+        } else if (cuentaSeleccionada.tipo_moneda === 'USD') {
+          // Si es USD, limpiar tasa
+          newForm.tasa_cambio = '';
+          setInfoTasa('');
+        }
+      }
+    }
+    
     setForm(newForm);
+    
+    // Guardar en borrador específico del tipo
     const draftName = `draft_${newForm.tipo}`;
     saveDraft(draftName, newForm);
+    
+    // Si cambió el tipo, limpiar categoría porque puede no estar disponible
+    if (field === 'tipo') {
+      newForm.id_categoria = '';
+      setForm(newForm);
+    }
+    
+    // Si cambió a VES manualmente, buscar tasa automáticamente
+    if (field === 'moneda' && value === 'VES' && newForm.fecha) {
+      buscarTasaAutomatica(newForm.fecha);
+    }
+    
+    // Si cambió de VES a USD manualmente, limpiar tasa
+    if (field === 'moneda' && value === 'USD') {
+      setForm({ ...newForm, tasa_cambio: '' });
+      setInfoTasa('');
+    }
   };
 
   const categoriasDisponibles = categorias.filter(c => c.tipo === form.tipo);
 
   const handleSubmit = async () => {
+    // Validaciones básicas
     if (!form.id_cuenta || !form.id_categoria || !form.monto_original) {
       setMensaje('Por favor completa todos los campos requeridos');
+      return;
+    }
+
+    // Validación crítica - Si es VES, debe tener tasa
+    if (form.moneda === 'VES' && !form.tasa_cambio) {
+      setMensaje('❌ Error: No se pudo obtener una tasa de cambio para esta fecha. Ingresa una manualmente.');
       return;
     }
 
@@ -76,19 +174,21 @@ export default function AddTransaction({ onClose, onSuccess }) {
 
     let montoUSD = parseFloat(form.monto_original);
 
-    if (form.moneda_original === 'BS' && form.tasa_cambio_usada) {
-      montoUSD = parseFloat(form.monto_original) / parseFloat(form.tasa_cambio_usada);
+    // Si la moneda es VES, calcular equivalente en USD
+    if (form.moneda === 'VES' && form.tasa_cambio) {
+      montoUSD = parseFloat(form.monto_original) / parseFloat(form.tasa_cambio);
     }
 
+    // Estructura final estandarizada
     const movimiento = {
       tipo: form.tipo,
       id_cuenta: form.id_cuenta,
       id_categoria: form.id_categoria,
       monto_original: parseFloat(form.monto_original),
-      moneda_original: form.moneda_original,
+      moneda_movimiento: form.moneda === 'BS' ? 'VES' : form.moneda,
       descripcion: form.descripcion || null,
       fecha: form.fecha,
-      tasa_cambio_usada: form.tasa_cambio_usada ? parseFloat(form.tasa_cambio_usada) : null,
+      tasa_aplicada: form.tasa_cambio ? parseFloat(form.tasa_cambio) : null,
       monto_usd_final: montoUSD
     };
 
@@ -100,7 +200,7 @@ export default function AddTransaction({ onClose, onSuccess }) {
       clearDraft(draftName);
       
       if (result.isOffline) {
-        setMensaje('📴 Guardado en dispositivo (Pendiente de sincronizar)');
+        setMensaje('🔴 Guardado en dispositivo (Pendiente de sincronizar)');
         updatePendingCount();
         setTimeout(() => {
           showNav();
@@ -148,7 +248,7 @@ export default function AddTransaction({ onClose, onSuccess }) {
         {!online && (
           <div className="mb-4 p-3 bg-orange-50 border border-orange-200 rounded-xl flex items-center gap-2">
             <span className="text-orange-600 text-sm font-medium">
-              📴 Sin conexión - Los datos se guardarán localmente
+              🔴 Sin conexión - Los datos se guardarán localmente
             </span>
           </div>
         )}
@@ -157,7 +257,7 @@ export default function AddTransaction({ onClose, onSuccess }) {
           <div className={`mb-4 p-4 rounded-xl ${
             mensaje.includes('✓') || mensaje.includes('ℹ️')
               ? 'bg-green-50 text-green-800'
-              : mensaje.includes('📴')
+              : mensaje.includes('🔴')
               ? 'bg-orange-50 text-orange-800'
               : 'bg-red-50 text-red-800'
           }`}>
@@ -205,6 +305,12 @@ export default function AddTransaction({ onClose, onSuccess }) {
                 </option>
               ))}
             </select>
+            {/* ✅ NUEVO: Indicador visual de moneda auto-seleccionada */}
+            {form.id_cuenta && (
+              <p className="text-xs text-blue-600 mt-1">
+                💡 Moneda establecida automáticamente: {form.moneda === 'VES' ? 'Bolívares (Bs)' : 'Dólares ($)'}
+              </p>
+            )}
           </div>
 
           <div>
@@ -246,32 +352,22 @@ export default function AddTransaction({ onClose, onSuccess }) {
                 Moneda *
               </label>
               <select
-                value={form.moneda_original}
-                onChange={(e) => handleChange('moneda_original', e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-blue-500 focus:outline-none text-base"
+                value={form.moneda}
+                onChange={(e) => handleChange('moneda', e.target.value)}
+                disabled={!!form.id_cuenta} // ✅ NUEVO: Deshabilitar si ya hay cuenta seleccionada
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-blue-500 focus:outline-none text-base disabled:bg-gray-100 disabled:cursor-not-allowed"
               >
                 <option value="USD">USD ($)</option>
-                <option value="BS">BS (Bs)</option>
+                <option value="VES">BS (Bs)</option>
               </select>
+              {/* ✅ NUEVO: Texto explicativo */}
+              {form.id_cuenta && (
+                <p className="text-xs text-gray-500 mt-1">
+                  Moneda bloqueada según la cuenta
+                </p>
+              )}
             </div>
           </div>
-
-          {form.moneda_original === 'BS' && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Tasa de Cambio (Bs/$)
-              </label>
-              <input
-                type="number"
-                inputMode="decimal"
-                step="0.01"
-                placeholder="Ej: 36.50"
-                value={form.tasa_cambio_usada}
-                onChange={(e) => handleChange('tasa_cambio_usada', e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-blue-500 focus:outline-none text-base"
-              />
-            </div>
-          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -284,6 +380,42 @@ export default function AddTransaction({ onClose, onSuccess }) {
               className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-blue-500 focus:outline-none text-base"
             />
           </div>
+
+          {form.moneda === 'VES' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Tasa de Cambio (Bs/$) *
+              </label>
+              
+              {infoTasa && (
+                <div className={`mb-2 p-2 rounded-lg text-xs ${
+                  infoTasa.includes('✅') 
+                    ? 'bg-green-50 text-green-700'
+                    : infoTasa.includes('⚠️')
+                    ? 'bg-yellow-50 text-yellow-700'
+                    : infoTasa.includes('🔍')
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'bg-red-50 text-red-700'
+                }`}>
+                  {infoTasa}
+                </div>
+              )}
+              
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                placeholder="Ej: 36.50"
+                value={form.tasa_cambio}
+                onChange={(e) => handleChange('tasa_cambio', e.target.value)}
+                disabled={loadingTasa}
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-blue-500 focus:outline-none text-base disabled:bg-gray-100 disabled:cursor-not-allowed"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                💡 La tasa se busca automáticamente según la fecha
+              </p>
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -300,14 +432,14 @@ export default function AddTransaction({ onClose, onSuccess }) {
 
           <button
             onClick={handleSubmit}
-            disabled={loading}
+            disabled={loading || loadingTasa}
             className={`w-full py-4 rounded-xl font-semibold text-lg active:scale-98 transition-transform shadow-lg disabled:opacity-50 ${
               form.tipo === 'ingreso'
                 ? 'bg-green-600 text-white'
                 : 'bg-red-600 text-white'
             }`}
           >
-            {loading ? 'Guardando...' : online ? '💾 Guardar Movimiento' : '📴 Guardar Localmente'}
+            {loading ? 'Guardando...' : loadingTasa ? 'Cargando tasa...' : online ? '💾 Guardar Movimiento' : '🔴 Guardar Localmente'}
           </button>
         </div>
       </div>

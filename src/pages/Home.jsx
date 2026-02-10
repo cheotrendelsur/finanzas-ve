@@ -4,12 +4,14 @@ import { useUI } from '../context/UIContext';
 import { useExchangeRate } from '../context/ExchangeRateContext';
 import { getCuentas, calcularSaldoActual } from '../supabaseClient';
 import AddTransaction from '../components/AddTransaction';
+import { formatCurrency } from '../utils/formatters'; // ✅ TAREA 3: Importar utilidad
 
 export default function Home({ cuentas, categorias, onCuentaClick, onRefresh }) {
   const { hideBottomNav } = useUI();
   const { getLatestRate } = useExchangeRate();
   
   const [showTransactionForm, setShowTransactionForm] = useState(false);
+  const [tipoTransaccion, setTipoTransaccion] = useState('egreso'); // ✅ TAREA 2: Controlar tipo de transacción
   const [tasaActual, setTasaActual] = useState(null);
   const [saldosCuentas, setSaldosCuentas] = useState({});
 
@@ -44,9 +46,16 @@ export default function Home({ cuentas, categorias, onCuentaClick, onRefresh }) 
     return parseFloat(monto) / (tasaActual || 587.89);
   };
 
+  // ✅ TAREA 2: Función mejorada que especifica el tipo de transacción
   const handleOpenTransaction = (tipo) => {
     hideBottomNav();
-    setShowTransactionForm(tipo);
+    setTipoTransaccion(tipo); // Guardar el tipo antes de abrir el modal
+    setShowTransactionForm(true);
+  };
+
+  const handleCloseTransaction = () => {
+    setShowTransactionForm(false);
+    setTipoTransaccion('egreso'); // Reset al default
   };
 
   return (
@@ -78,7 +87,7 @@ export default function Home({ cuentas, categorias, onCuentaClick, onRefresh }) 
         </div>
       </div>
 
-      {/* Sección de Cuentas - SIN BOTÓN DE AGREGAR */}
+      {/* Sección de Cuentas */}
       <div className="space-y-3">
         <h2 className="text-lg font-semibold text-gray-800 px-2 mb-4">Mis Cuentas</h2>
 
@@ -115,13 +124,9 @@ export default function Home({ cuentas, categorias, onCuentaClick, onRefresh }) 
                       </div>
                     </div>
                     
-                    {/* Saldo en moneda original */}
+                    {/* ✅ TAREA 3: Usar formatCurrency para consistencia */}
                     <p className="text-3xl font-bold text-gray-900">
-                      {cuenta.tipo_moneda === 'USD' ? '$' : 'Bs. '}
-                      {parseFloat(saldoActual).toLocaleString('es-VE', { 
-                        minimumFractionDigits: 2, 
-                        maximumFractionDigits: 2 
-                      })}
+                      {formatCurrency(saldoActual, cuenta.tipo_moneda)}
                     </p>
                     
                     {/* Equivalente en USD (solo para VES) */}
@@ -138,13 +143,11 @@ export default function Home({ cuentas, categorias, onCuentaClick, onRefresh }) 
         )}
       </div>
 
-      {/* Modal de Transacción */}
+      {/* ✅ TAREA 2: Modal de Transacción con tipo específico */}
       {showTransactionForm && (
         <AddTransaction
-          tipo={showTransactionForm}
-          cuentas={cuentas}
-          categorias={categorias}
-          onClose={() => setShowTransactionForm(false)}
+          tipo={tipoTransaccion}
+          onClose={handleCloseTransaction}
           onSuccess={onRefresh}
         />
       )}

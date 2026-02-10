@@ -9,10 +9,12 @@ export const OfflineProvider = ({ children }) => {
   const [pendingCount, setPendingCount] = useState(0);
 
   useEffect(() => {
-    // Actualizar estado inicial
     updatePendingCount();
     
-    // Configurar listeners
+    if (isOnline() && getOfflineQueue().length > 0) {
+      performSync();
+    }
+    
     const cleanup = setupOnlineListener(handleConnectivityChange);
     
     return cleanup;
@@ -27,7 +29,8 @@ export const OfflineProvider = ({ children }) => {
     const nowOnline = isOnline();
     setOnline(nowOnline);
     
-    if (nowOnline && pendingCount > 0) {
+    const currentQueue = getOfflineQueue();
+    if (nowOnline && currentQueue.length > 0) {
       await performSync();
     }
   };
