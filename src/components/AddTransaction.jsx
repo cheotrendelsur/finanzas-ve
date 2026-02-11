@@ -6,8 +6,9 @@ import { useOffline } from '../context/OfflineContext';
 import { saveDraft, loadDraft, clearDraft } from '../utils/offlineManager';
 
 export default function AddTransaction({ tipo: tipoInicial = 'egreso', onClose, onSuccess }) {
-  const { showNav } = useUI();
-  const { online, updatePendingCount } = useOffline();
+// DESPUÉS:
+const { showNav } = useUI();
+const { online, updatePendingCount, performSync } = useOffline();
   
   const [cuentas, setCuentas] = useState([]);
   const [categorias, setCategorias] = useState([]);
@@ -73,15 +74,28 @@ export default function AddTransaction({ tipo: tipoInicial = 'egreso', onClose, 
 
   // Búsqueda automática de tasa al cambiar fecha o moneda
   useEffect(() => {
-    if (form.moneda === 'VES' && form.fecha) {
+    // ✅ SOLO buscar si hay conexión Y la moneda es VES
+    if (form.moneda === 'VES' && form.fecha && online) {
       buscarTasaAutomatica(form.fecha);
+    } else if (form.moneda === 'VES' && !online) {
+      // Si es VES pero no hay conexión, mostrar mensaje
+      setInfoTasa('📵 Sin conexión. Ingresa la tasa manualmente.');
     }
-  }, [form.fecha, form.moneda]);
+  }, [form.fecha, form.moneda, online]); // ✅ AGREGAR 'online' como dependencia
 
   const buscarTasaAutomatica = async (fecha) => {
-    setLoadingTasa(true);
-    setInfoTasa('🔍 Buscando tasa...');
-    
+  // ✅ VERIFICACIÓN TEMPRANA: No buscar si estamos offline
+  if (!online) {
+    setInfoTasa('📵 Sin conexión. Ingresa la tasa manualmente.');
+    setForm(prevForm => ({ ...prevForm, tasa_cambio: '' }));
+    setLoadingTasa(false);
+    return;
+  }
+
+  setLoadingTasa(true);
+  setInfoTasa('🔍 Buscando tasa...');
+  
+  try {
     const resultadoTasa = await obtenerTasaParaFecha(fecha);
     
     if (resultadoTasa) {
@@ -99,11 +113,17 @@ export default function AddTransaction({ tipo: tipoInicial = 'egreso', onClose, 
       saveDraft(draftName, newForm);
     } else {
       setInfoTasa('❌ No hay tasas registradas. Por favor ingresa una tasa manualmente.');
-      setForm({ ...form, tasa_cambio: '' });
+      setForm(prevForm => ({ ...prevForm, tasa_cambio: '' }));
     }
-    
+  } catch (error) {
+    // ✅ CAPTURA DE ERRORES SIN CRASHEAR
+    console.error('Error buscando tasa:', error);
+    setInfoTasa('⚠️ Error buscando tasa. Ingrésala manualmente.');
+    setForm(prevForm => ({ ...prevForm, tasa_cambio: '' }));
+  } finally {
     setLoadingTasa(false);
-  };
+  }
+};
 
   const handleChange = (field, value) => {
     // Validación anti-BS en tiempo real
@@ -158,28 +178,33 @@ export default function AddTransaction({ tipo: tipoInicial = 'egreso', onClose, 
   const categoriasDisponibles = categorias.filter(c => c.tipo === form.tipo);
 
   const handleSubmit = async () => {
-    // Validaciones básicas
-    if (!form.id_cuenta || !form.id_categoria || !form.monto_original) {
-      setMensaje('Por favor completa todos los campos requeridos');
-      return;
-    }
+  // Validaciones básicas
+  if (!form.id_cuenta || !form.id_categoria || !form.monto_original) {
+    setMensaje('Por favor completa todos los campos requeridos');
+    return;
+  }
 
-    // Validación crítica - Si es VES, debe tener tasa
-    if (form.moneda === 'VES' && !form.tasa_cambio) {
-      setMensaje('❌ Error: No se pudo obtener una tasa de cambio para esta fecha. Ingresa una manualmente.');
-      return;
-    }
+  // ✅ VALIDACIÓN MEJORADA: Si es VES, debe tener tasa (online o offline)
+  if (form.moneda === 'VES' && !form.tasa_cambio) {
+    setMensaje('❌ Debes ingresar una tasa de cambio para movimientos en Bolívares');
+    return;
+  }
 
-    setLoading(true);
+  // ✅ VALIDACIÓN: Si la tasa es inválida
+  if (form.moneda === 'VES' && (isNaN(parseFloat(form.tasa_cambio)) || parseFloat(form.tasa_cambio) <= 0)) {
+    setMensaje('❌ La tasa de cambio debe ser un número válido mayor que cero');
+    return;
+  }
 
+  setLoading(true);
+
+  try {
     let montoUSD = parseFloat(form.monto_original);
 
-    // Si la moneda es VES, calcular equivalente en USD
     if (form.moneda === 'VES' && form.tasa_cambio) {
       montoUSD = parseFloat(form.monto_original) / parseFloat(form.tasa_cambio);
     }
 
-    // Estructura final estandarizada
     const movimiento = {
       tipo: form.tipo,
       id_cuenta: form.id_cuenta,
@@ -193,7 +218,6 @@ export default function AddTransaction({ tipo: tipoInicial = 'egreso', onClose, 
     };
 
     const result = await crearMovimiento(movimiento);
-    setLoading(false);
 
     if (result) {
       const draftName = `draft_${form.tipo}`;
@@ -202,6 +226,15 @@ export default function AddTransaction({ tipo: tipoInicial = 'egreso', onClose, 
       if (result.isOffline) {
         setMensaje('🔴 Guardado en dispositivo (Pendiente de sincronizar)');
         updatePendingCount();
+        
+        // Sincronización oportunista
+        setTimeout(async () => {
+          if (online) {
+            console.log('🔄 Guardado offline pero hay conexión, intentando sincronizar...');
+            await performSync(false);
+          }
+        }, 2000);
+        
         setTimeout(() => {
           showNav();
           onSuccess();
@@ -218,7 +251,24 @@ export default function AddTransaction({ tipo: tipoInicial = 'egreso', onClose, 
     } else {
       setMensaje('Error: No se pudo guardar el movimiento');
     }
-  };
+  } catch (error) {
+    // ✅ CAPTURA DE ERRORES DE RED
+    console.error('Error en submit:', error);
+    
+    if (error.message?.includes('fetch') || error.message?.includes('network')) {
+      setMensaje('⚠️ Sin conexión. El movimiento se guardará localmente.');
+      
+      // Intentar guardar en cola offline manualmente
+      setTimeout(() => {
+        handleSubmit(); // Reintentar (ahora debería detectar offline)
+      }, 500);
+    } else {
+      setMensaje('❌ Error inesperado: ' + error.message);
+    }
+  } finally {
+    setLoading(false);
+  }
+};
 
   const handleCancel = () => {
     if (form.monto_original || form.descripcion) {

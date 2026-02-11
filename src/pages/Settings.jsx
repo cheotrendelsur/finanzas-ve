@@ -1,15 +1,26 @@
 import { useState, useEffect } from 'react';
-import { User, DollarSign, Download, Shield, Fingerprint, X } from 'lucide-react';
+import { User, DollarSign, Download, Shield, Fingerprint, X, RefreshCw, AlertCircle, Trash2, CheckCircle, Clock } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { getTasas, crearTasa, getMovimientos, actualizarMovimiento } from '../supabaseClient';
 import { useUI } from '../context/UIContext';
 import { useAuth } from '../context/AuthContext';
+import { useOffline } from '../context/OfflineContext';
 import { formatDateToDisplay, formatDateToShort, parseDateFromDB, formatDateForDB } from '../utils/formatters';
+import { 
+  getOfflineQueue, 
+  getFailedQueue, 
+  clearAllQueues, 
+  clearFailedQueue,
+  getLastSyncTime 
+} from '../utils/offlineManager';
 
 export default function Settings() {
   const { hideBottomNav, showNav } = useUI();
   const { user, biometricEnabled, enableBiometric, logout } = useAuth();
+  const { online, pendingCount, failedCount, isSyncing, lastSyncResult, manualSync } = useOffline();
+  
   const [showAddTasa, setShowAddTasa] = useState(false);
+  const [showSyncPanel, setShowSyncPanel] = useState(false);
   const [tasasRecientes, setTasasRecientes] = useState([]);
   const [formTasa, setFormTasa] = useState({
     fecha: new Date().toISOString().split('T')[0],
@@ -18,6 +29,7 @@ export default function Settings() {
   const [loading, setLoading] = useState(false);
   const [mensaje, setMensaje] = useState('');
   const [biometricMessage, setBiometricMessage] = useState('');
+  const [syncMessage, setSyncMessage] = useState('');
   
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
@@ -95,19 +107,6 @@ export default function Settings() {
     }
   };
 
-  /**
-   * 🎯 FUNCIÓN MEJORADA: Exportar CSV con columnas detalladas
-   * 
-   * Columnas:
-   * 1. Fecha (formateada)
-   * 2. Tipo (Ingreso/Egreso)
-   * 3. Categoría
-   * 4. Cuenta
-   * 5. Moneda Original (VES/USD)
-   * 6. Monto Original (en moneda original)
-   * 7. Tasa Aplicada (si aplica)
-   * 8. Monto USD Final
-   */
   const handleExportCSV = async () => {
     const movimientos = await getMovimientos();
     
@@ -121,10 +120,8 @@ export default function Settings() {
       return;
     }
 
-    // Ordenar cronológicamente
     filtrados.sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
 
-    // ✅ CABECERAS MEJORADAS
     const headers = [
       'Fecha',
       'Tipo',
@@ -136,23 +133,20 @@ export default function Settings() {
       'Monto USD Final'
     ];
 
-    // ✅ FILAS CON DATOS DETALLADOS
     const rows = filtrados.map(m => [
-      formatDateToShort(m.fecha),                                    // Fecha formateada
-      m.tipo === 'ingreso' ? 'Ingreso' : 'Egreso',                  // Tipo
-      m.categoria?.nombre || 'Sin categoría',                       // Categoría
-      m.cuenta?.nombre || 'N/A',                                    // Cuenta
-      m.moneda_movimiento || 'USD',                                 // Moneda Original
-      parseFloat(m.monto_original || 0).toFixed(2),                 // Monto Original
-      m.tasa_aplicada ? parseFloat(m.tasa_aplicada).toFixed(2) : 'N/A',  // Tasa Aplicada
-      parseFloat(m.monto_usd_final || 0).toFixed(2)                 // Monto USD Final
+      formatDateToShort(m.fecha),
+      m.tipo === 'ingreso' ? 'Ingreso' : 'Egreso',
+      m.categoria?.nombre || 'Sin categoría',
+      m.cuenta?.nombre || 'N/A',
+      m.moneda_movimiento || 'USD',
+      parseFloat(m.monto_original || 0).toFixed(2),
+      m.tasa_aplicada ? parseFloat(m.tasa_aplicada).toFixed(2) : 'N/A',
+      parseFloat(m.monto_usd_final || 0).toFixed(2)
     ]);
 
-    // Construir CSV
     const csvContent = [
       headers.join(','),
       ...rows.map(row => row.map(cell => {
-        // Escapar comas y comillas en los valores
         if (typeof cell === 'string' && (cell.includes(',') || cell.includes('"'))) {
           return `"${cell.replace(/"/g, '""')}"`;
         }
@@ -160,7 +154,6 @@ export default function Settings() {
       }).join(','))
     ].join('\n');
 
-    // Descargar archivo
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
@@ -289,6 +282,95 @@ export default function Settings() {
     return fechaStr;
   };
 
+  // ✅ NUEVAS FUNCIONES DE GESTIÓN DE SINCRONIZACIÓN
+
+  const handleOpenSyncPanel = () => {
+    hideBottomNav();
+    setShowSyncPanel(true);
+  };
+
+  const handleCloseSyncPanel = () => {
+    showNav();
+    setShowSyncPanel(false);
+    setSyncMessage('');
+  };
+
+  const handleManualSync = async () => {
+    setSyncMessage('🔄 Sincronizando...');
+    const result = await manualSync();
+    
+    if (result.success) {
+      setSyncMessage(`✅ Sincronización exitosa: ${result.synced} operaciones sincronizadas`);
+    } else {
+      setSyncMessage(`❌ Error: ${result.message}`);
+    }
+    
+    setTimeout(() => setSyncMessage(''), 5000);
+  };
+
+  const handleClearFailedQueue = () => {
+    const confirmed = confirm(
+      '¿Estás seguro de que deseas limpiar la cola de operaciones fallidas?\n\n' +
+      'Estas operaciones se perderán permanentemente.'
+    );
+    
+    if (confirmed) {
+      clearFailedQueue();
+      setSyncMessage('✅ Cola de fallidos limpiada');
+      setTimeout(() => setSyncMessage(''), 3000);
+    }
+  };
+
+  const handleClearAllQueues = () => {
+    const confirmed = confirm(
+      '⚠️ ADVERTENCIA: Esta acción eliminará TODAS las operaciones pendientes y fallidas.\n\n' +
+      'Los datos que no se hayan sincronizado se perderán permanentemente.\n\n' +
+      '¿Estás COMPLETAMENTE seguro?'
+    );
+    
+    if (confirmed) {
+      const doubleConfirm = confirm('Última confirmación: ¿Eliminar TODAS las colas?');
+      if (doubleConfirm) {
+        clearAllQueues();
+        setSyncMessage('✅ Todas las colas limpiadas');
+        setTimeout(() => setSyncMessage(''), 3000);
+      }
+    }
+  };
+
+  const formatTimestamp = (timestamp) => {
+    if (!timestamp) return 'Nunca';
+    
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diff = now - date;
+    
+    // Si fue hace menos de 1 minuto
+    if (diff < 60000) {
+      return 'Hace unos segundos';
+    }
+    
+    // Si fue hace menos de 1 hora
+    if (diff < 3600000) {
+      const minutes = Math.floor(diff / 60000);
+      return `Hace ${minutes} minuto${minutes > 1 ? 's' : ''}`;
+    }
+    
+    // Si fue hoy
+    if (date.toDateString() === now.toDateString()) {
+      return `Hoy a las ${date.toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' })}`;
+    }
+    
+    // Formato completo
+    return date.toLocaleString('es-VE', { 
+      day: '2-digit', 
+      month: '2-digit', 
+      year: 'numeric',
+      hour: '2-digit', 
+      minute: '2-digit' 
+    });
+  };
+
   const meses = [
     { value: 1, label: 'Enero' },
     { value: 2, label: 'Febrero' },
@@ -309,6 +391,61 @@ export default function Settings() {
   return (
     <div className="pb-20 px-4 pt-6">
       <h1 className="text-2xl font-bold text-gray-800 mb-6">Configuración</h1>
+
+      {/* ✅ NUEVO: Panel de Estado de Sincronización */}
+      <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 mb-4">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+              online ? 'bg-green-100' : 'bg-red-100'
+            }`}>
+              <RefreshCw className={`w-5 h-5 ${
+                online ? 'text-green-600' : 'text-red-600'
+              } ${isSyncing ? 'animate-spin' : ''}`} />
+            </div>
+            <div>
+              <h2 className="font-semibold text-gray-800">Sincronización</h2>
+              <p className="text-sm text-gray-500">
+                {online ? 'Conectado' : 'Sin conexión'}
+              </p>
+            </div>
+          </div>
+          {(pendingCount > 0 || failedCount > 0) && (
+            <div className="flex gap-2">
+              {pendingCount > 0 && (
+                <span className="px-3 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs font-medium">
+                  {pendingCount} pendiente{pendingCount > 1 ? 's' : ''}
+                </span>
+              )}
+              {failedCount > 0 && (
+                <span className="px-3 py-1 bg-red-100 text-red-800 rounded-full text-xs font-medium">
+                  {failedCount} fallido{failedCount > 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+
+        <button
+          onClick={handleOpenSyncPanel}
+          className="w-full px-6 py-3 bg-blue-600 text-white rounded-xl font-medium active:scale-95 transition-transform"
+        >
+          📊 Ver Detalles de Sincronización
+        </button>
+
+        {lastSyncResult && (
+          <div className="mt-3 p-3 bg-gray-50 rounded-lg">
+            <p className="text-xs text-gray-600">
+              Última sincronización: {formatTimestamp(lastSyncResult.timestamp)}
+            </p>
+            {lastSyncResult.synced > 0 && (
+              <p className="text-xs text-green-600 mt-1">
+                ✓ {lastSyncResult.synced} operación{lastSyncResult.synced > 1 ? 'es' : ''} sincronizada{lastSyncResult.synced > 1 ? 's' : ''}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 mb-4">
         <div className="flex items-center gap-3 mb-4">
@@ -473,6 +610,7 @@ export default function Settings() {
         </button>
       </div>
 
+      {/* ✅ NUEVO: Modal de Agregar Tasa */}
       {showAddTasa && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center sm:justify-center">
           <div className="bg-white w-full sm:max-w-lg sm:rounded-3xl rounded-t-3xl p-6 pb-8 animate-slide-up">
@@ -534,6 +672,165 @@ export default function Settings() {
               >
                 {loading ? 'Guardando...' : '💰 Guardar Tasa'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ✅ NUEVO: Modal de Panel de Sincronización */}
+      {showSyncPanel && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center sm:justify-center">
+          <div className="bg-white w-full sm:max-w-lg sm:rounded-3xl rounded-t-3xl p-6 pb-8 animate-slide-up max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold text-gray-800">Gestión de Sincronización</h2>
+              <button
+                onClick={handleCloseSyncPanel}
+                className="p-2 text-gray-500 hover:bg-gray-100 rounded-full active:scale-95 transition-transform"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            {syncMessage && (
+              <div className={`mb-4 p-4 rounded-xl ${
+                syncMessage.includes('✅')
+                  ? 'bg-green-50 text-green-800'
+                  : 'bg-red-50 text-red-800'
+              }`}>
+                <p className="text-sm">{syncMessage}</p>
+              </div>
+            )}
+
+            {/* Estado Actual */}
+            <div className="mb-6">
+              <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                <CheckCircle className={`w-5 h-5 ${online ? 'text-green-600' : 'text-gray-400'}`} />
+                Estado Actual
+              </h3>
+              <div className="space-y-2">
+                <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                  <span className="text-sm text-gray-600">Conexión</span>
+                  <span className={`font-medium ${online ? 'text-green-600' : 'text-red-600'}`}>
+                    {online ? '✓ Conectado' : '✗ Sin conexión'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                  <span className="text-sm text-gray-600">Pendientes</span>
+                  <span className="font-medium text-yellow-600">{pendingCount}</span>
+                </div>
+                <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                  <span className="text-sm text-gray-600">Fallidos</span>
+                  <span className="font-medium text-red-600">{failedCount}</span>
+                </div>
+                <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                  <span className="text-sm text-gray-600">Último sync</span>
+                  <span className="font-medium text-gray-800">
+                    {formatTimestamp(getLastSyncTime())}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Operaciones Pendientes */}
+            {pendingCount > 0 && (
+              <div className="mb-6">
+                <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-yellow-600" />
+                  Operaciones Pendientes ({pendingCount})
+                </h3>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {getOfflineQueue().map((op, index) => (
+                    <div key={op.id} className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="text-sm font-medium text-gray-800">
+                            {op.type === 'create' ? '➕ Crear' : op.type === 'update' ? '✏️ Actualizar' : '🗑️ Eliminar'}
+                          </p>
+                          <p className="text-xs text-gray-600 mt-1">
+                            {formatTimestamp(op.timestamp)}
+                          </p>
+                        </div>
+                        <span className="text-xs px-2 py-1 bg-yellow-200 text-yellow-800 rounded">
+                          Intento {op.attempts}
+                        </span>
+                      </div>
+                      {op.error && (
+                        <p className="text-xs text-red-600 mt-2">Error: {op.error}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Operaciones Fallidas */}
+            {failedCount > 0 && (
+              <div className="mb-6">
+                <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5 text-red-600" />
+                  Operaciones Fallidas ({failedCount})
+                </h3>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {getFailedQueue().map((op, index) => (
+                    <div key={index} className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="text-sm font-medium text-gray-800">
+                            {op.type === 'create' ? '➕ Crear' : op.type === 'update' ? '✏️ Actualizar' : '🗑️ Eliminar'}
+                          </p>
+                          <p className="text-xs text-gray-600 mt-1">
+                            {formatTimestamp(op.timestamp)}
+                          </p>
+                        </div>
+                        <span className="text-xs px-2 py-1 bg-red-200 text-red-800 rounded">
+                          Fallido
+                        </span>
+                      </div>
+                      {op.error && (
+                        <p className="text-xs text-red-600 mt-2">{op.error}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Acciones */}
+            <div className="space-y-3">
+              <button
+                onClick={handleManualSync}
+                disabled={isSyncing || !online || pendingCount === 0}
+                className="w-full px-6 py-3 bg-blue-600 text-white rounded-xl font-medium active:scale-95 transition-transform disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                <RefreshCw className={`w-5 h-5 ${isSyncing ? 'animate-spin' : ''}`} />
+                {isSyncing ? 'Sincronizando...' : 'Reintentar Sincronización'}
+              </button>
+
+              {failedCount > 0 && (
+                <button
+                  onClick={handleClearFailedQueue}
+                  className="w-full px-6 py-3 bg-orange-600 text-white rounded-xl font-medium active:scale-95 transition-transform flex items-center justify-center gap-2"
+                >
+                  <Trash2 className="w-5 h-5" />
+                  Limpiar Cola de Fallidos
+                </button>
+              )}
+
+              {(pendingCount > 0 || failedCount > 0) && (
+                <button
+                  onClick={handleClearAllQueues}
+                  className="w-full px-6 py-3 bg-red-600 text-white rounded-xl font-medium active:scale-95 transition-transform flex items-center justify-center gap-2"
+                >
+                  <AlertCircle className="w-5 h-5" />
+                  Limpiar TODAS las Colas
+                </button>
+              )}
+            </div>
+
+            <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-xl">
+              <p className="text-xs text-blue-800">
+                <strong>💡 Nota:</strong> Las operaciones se sincronizan automáticamente cuando recuperas la conexión. El sistema reintenta con intervalos crecientes: 10s, 30s, 1min, 5min, 15min.
+              </p>
             </div>
           </div>
         </div>

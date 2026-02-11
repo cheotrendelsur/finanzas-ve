@@ -2,9 +2,11 @@ import { useState, useEffect } from 'react';
 import { X, Trash2 } from 'lucide-react';
 import { actualizarMovimiento, eliminarMovimiento, obtenerTasaParaFecha } from '../supabaseClient';
 import { useUI } from '../context/UIContext';
+import { useOffline } from '../context/OfflineContext';
 
 export default function EditTransaction({ movimiento, cuentas, categorias, onClose, onSuccess }) {
   const { showNav } = useUI();
+  const { online, updatePendingCount, performSync } = useOffline();
   
   const [form, setForm] = useState({
     tipo: movimiento.tipo,
@@ -140,7 +142,22 @@ export default function EditTransaction({ movimiento, cuentas, categorias, onClo
     setLoading(false);
 
     if (result) {
-      setMensaje('✓ Movimiento actualizado correctamente');
+      // ✅ NUEVA LÓGICA: Verificar si fue offline
+      if (result.isOffline) {
+        setMensaje('🔴 Cambios guardados en dispositivo (Pendiente de sincronizar)');
+        updatePendingCount();
+        
+        // Sincronización oportunista
+        setTimeout(async () => {
+          if (online) {
+            console.log('🔄 Actualización offline pero hay conexión, intentando sincronizar...');
+            await performSync(false);
+          }
+        }, 2000);
+      } else {
+        setMensaje('✓ Movimiento actualizado correctamente');
+      }
+      
       setTimeout(() => {
         showNav();
         onSuccess();
